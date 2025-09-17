@@ -271,22 +271,129 @@ async def main():
 asyncio.run(main())
 ```
 
-### Claude Code 통합 설정
+### 🤖 AI 클라이언트 연동 설정 (MCP)
 
-```json
-// ~/.config/claude-code/mcp.json
-{
-  "servers": {
-    "unreal_blueprint": {
-      "command": "fastmcp",
-      "args": ["run", "/absolute/path/to/unreal_blueprint_mcp_server.py"],
-      "env": {
-        "PATH": "/path/to/mcp_server_env/bin:$PATH"
+이 프로젝트의 MCP 서버(`unreal_blueprint_mcp_server.py`)를 사용하려면, 각 AI 클라이언트(Gemini, Claude 등)에 서버의 위치와 실행 방법을 알려주어야 합니다. 아래에서 사용하는 AI 툴에 맞는 설정 방법을 따르세요.
+
+---
+
+#### **1. Gemini CLI 설정**
+
+Gemini CLI는 `settings.json` 파일을 통해 MCP 서버를 인식합니다.
+
+- **설정 파일 위치:**
+  - **Windows:** `%USERPROFILE%\.gemini\settings.json`
+  - **macOS/Linux:** `~/.gemini/settings.json`
+
+- **설정 방법:**
+  1. 위의 경로에 폴더나 파일이 없다면 새로 생성합니다.
+  2. `settings.json` 파일을 열고 아래 내용을 추가합니다. **(주의: `[프로젝트의 절대 경로]` 부분을 실제 경로로 수정해야 합니다.)**
+
+- **Windows용 `settings.json` 내용:**
+  ```json
+  {
+    "mcpServers": {
+      "unreal_blueprint": {
+        "transport": "stdio",
+        "command": "[프로젝트의 절대 경로]\\unreal_bp_mcp\\mcp_server_env\\Scripts\\python.exe",
+        "args": [
+          "[프로젝트의 절대 경로]\\unreal_bp_mcp\\unreal_blueprint_mcp_server.py"
+        ]
       }
     }
   }
-}
-```
+  ```
+  *(예: `C:\\Users\\test\\mcp\\unreal_bp_mcp` 처럼 `\`를 두 번 사용)*
+
+- **macOS/Linux용 `settings.json` 내용:**
+  ```json
+  {
+    "mcpServers": {
+      "unreal_blueprint": {
+        "transport": "stdio",
+        "command": "[프로젝트의 절대 경로]/unreal_bp_mcp/mcp_server_env/bin/python",
+        "args": [
+          "[프로젝트의 절대 경로]/unreal_bp_mcp/unreal_blueprint_mcp_server.py"
+        ]
+      }
+    }
+  }
+  ```
+  *(예: `/home/test/mcp/unreal_bp_mcp`)*
+
+---
+
+#### **2. Claude Desktop 설정**
+
+Claude Desktop 앱은 내장된 설정 UI를 통해 MCP 서버를 설정하는 것이 가장 편리합니다.
+
+- **설정 방법:**
+  1. Claude Desktop 앱을 실행합니다.
+  2. 상단 메뉴 바에서 `Claude` > `Settings...` 로 이동합니다.
+  3. `Developer` 탭을 선택하고 `Edit Config` 버튼을 클릭합니다.
+  4. `claude_desktop_config.json` 파일이 열리면 아래 내용을 추가합니다. **(주의: `[프로젝트의 절대 경로]` 부분을 실제 경로로 수정해야 합니다.)**
+
+- **Windows용 `claude_desktop_config.json` 내용:**
+  ```json
+  {
+    "mcpServers": {
+      "unreal_blueprint": {
+        "command": "[프로젝트의 절대 경로]\\unreal_bp_mcp\\mcp_server_env\\Scripts\\python.exe",
+        "args": [
+          "[프로젝트의 절대 경로]\\unreal_bp_mcp\\unreal_blueprint_mcp_server.py"
+        ]
+      }
+    }
+  }
+  ```
+
+- **macOS용 `claude_desktop_config.json` 내용:**
+  ```json
+  {
+    "mcpServers": {
+      "unreal_blueprint": {
+        "command": "[프로젝트의 절대 경로]/unreal_bp_mcp/mcp_server_env/bin/python",
+        "args": [
+          "[프로젝트의 절대 경로]/unreal_bp_mcp/unreal_blueprint_mcp_server.py"
+        ]
+      }
+    }
+  }
+  ```
+- **저장 및 재시작:** 파일 저장 후 Claude Desktop 앱을 재시작하면 설정이 적용됩니다.
+
+---
+
+#### **3. Claude Code (CLI) 설정**
+
+Claude Code는 터미널에서 `claude mcp add` 명령어를 사용하여 MCP 서버를 추가하는 것을 권장합니다.
+
+- **설정 방법:**
+  1. `unreal_bp_mcp` 프로젝트의 루트 폴더에서 터미널(명령 프롬프트)을 엽니다.
+  2. 아래 명령어를 실행하여 `unreal_blueprint` 서버를 프로젝트 범위(`--scope project`)로 추가합니다.
+  3. 이 명령어는 프로젝트 폴더에 `.mcp.json` 파일을 생성하여 팀원과 설정을 공유하기 용이합니다.
+
+- **Windows/macOS/Linux 공통 명령어:**
+  ```bash
+  # Python 가상환경의 python 실행 파일 경로
+  # (Windows) mcp_server_env\Scripts\python.exe
+  # (macOS/Linux) mcp_server_env/bin/python
+  
+  claude mcp add unreal_blueprint --scope project -- \
+  [위의 python 실행 파일 경로] unreal_blueprint_mcp_server.py
+  ```
+
+- **실행 예시 (Windows):**
+  ```bash
+  claude mcp add unreal_blueprint --scope project -- mcp_server_env\Scripts\python.exe unreal_blueprint_mcp_server.py
+  ```
+
+- **실행 예시 (macOS/Linux):**
+  ```bash
+  claude mcp add unreal_blueprint --scope project -- mcp_server_env/bin/python unreal_blueprint_mcp_server.py
+  ```
+- **확인:** `claude mcp list` 명령어로 서버가 잘 추가되었는지 확인할 수 있습니다.
+
 
 ### 배치 블루프린트 생성
 
