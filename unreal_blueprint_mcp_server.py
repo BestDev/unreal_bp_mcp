@@ -5,8 +5,8 @@ Unreal Blueprint MCP Server
 This server provides MCP (Model Context Protocol) tools for controlling
 Unreal Engine blueprints through WebSocket communication with the UnrealBlueprintMCP plugin.
 
-The server translates MCP tool calls into messages that can be processed by the Unreal plugin,
-enabling AI clients to create and modify blueprints programmatically.
+The server operates as a WebSocket server that accepts connections from Unreal Engine clients,
+translating MCP tool calls into JSON-RPC 2.0 messages for the Unreal plugin.
 """
 
 import json
@@ -14,8 +14,10 @@ import logging
 import asyncio
 import websockets
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from pydantic import BaseModel, Field
+import uuid
+import traceback
 
 from fastmcp import FastMCP
 
@@ -49,59 +51,141 @@ class BlueprintPropertyParams(BaseModel):
 # Create FastMCP server instance
 mcp = FastMCP("UnrealBlueprintMCPServer")
 
-# Global variables for tracking Unreal connection
-unreal_websocket_url = "ws://localhost:8080"  # Default Unreal plugin WebSocket URL
-last_connection_attempt = None
-connection_status = "not_connected"
+# Global variables for WebSocket server management
+WS_HOST = "localhost"
+WS_PORT = 8080
+CLIENTS: Set[websockets.WebSocketServerProtocol] = set()
+unreal_client: Optional[websockets.WebSocketServerProtocol] = None
+ws_server: Optional[websockets.WebSocketServer] = None
+last_connection_attempt: Optional[datetime] = None
+connection_status = "server_not_started"
+server_start_time: Optional[datetime] = None
 
-async def send_command_to_unreal(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+# WebSocket Connection Management
+async def register_client(websocket: websockets.WebSocketServerProtocol, path: str):
+    """Register a new Unreal Engine client connection"""
+    global unreal_client, connection_status, last_connection_attempt
+
+    CLIENTS.add(websocket)
+    unreal_client = websocket
+    last_connection_attempt = datetime.now()
+    connection_status = "connected"
+
+    client_info = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+    logger.info(f"Unreal Engine client connected from {client_info}")
+
+    try:
+        # Keep connection alive and handle messages
+        async for message in websocket:
+            try:
+                data = json.loads(message)
+                logger.info(f"Received from Unreal: {data}")
+                # Here we could handle unsolicited messages from Unreal if needed
+            except json.JSONDecodeError as e:
+                logger.warning(f"Invalid JSON received from client: {e}")
+
+    except websockets.exceptions.ConnectionClosed:
+        logger.info(f"Client {client_info} disconnected")
+    except Exception as e:
+        logger.error(f"Error handling client {client_info}: {e}")
+    finally:
+        await unregister_client(websocket)
+
+async def unregister_client(websocket: websockets.WebSocketServerProtocol):
+    """Unregister a client connection"""
+    global unreal_client, connection_status
+
+    CLIENTS.discard(websocket)
+    if unreal_client == websocket:
+        unreal_client = None
+        connection_status = "disconnected"
+        logger.info("Primary Unreal Engine client disconnected")
+
+async def send_command_to_unreal(method: str, params: Dict[str, Any], timeout: float = 10.0) -> Dict[str, Any]:
     """
-    Send a command to Unreal Engine via WebSocket (simulated for now)
-
-    In a real implementation, this would establish a WebSocket connection
-    to the UnrealBlueprintMCP plugin and send the JSON-RPC message.
+    Send a command to connected Unreal Engine client via WebSocket
 
     Args:
-        method: The method to call (create_blueprint, set_property)
+        method: The RPC method to call (create_blueprint, set_property, etc.)
         params: Parameters for the method
+        timeout: Maximum time to wait for response in seconds
 
     Returns:
-        Response dictionary with success status and result data
-    """
-    global last_connection_attempt, connection_status
+        Response dictionary from Unreal Engine
 
-    last_connection_attempt = datetime.now()
+    Raises:
+        ConnectionError: If no Unreal client is connected
+        TimeoutError: If Unreal doesn't respond within timeout
+        ValueError: If Unreal returns an error response
+    """
+    global unreal_client, last_connection_attempt, connection_status
+
+    if not unreal_client:
+        connection_status = "no_client"
+        raise ConnectionError("No Unreal Engine client is currently connected. Please ensure the UnrealBlueprintMCP plugin is running and connected.")
+
+    # Generate unique message ID
+    message_id = str(uuid.uuid4())
 
     # Create JSON-RPC 2.0 message
     message = {
         "jsonrpc": "2.0",
-        "id": f"{method}_{datetime.now().isoformat()}",
+        "id": message_id,
         "method": method,
         "params": params
     }
 
-    logger.info(f"Would send to Unreal: {json.dumps(message, indent=2)}")
+    last_connection_attempt = datetime.now()
+    logger.info(f"Sending to Unreal: {json.dumps(message)}")
 
-    # Simulate successful response for demonstration
-    # In real implementation, this would be the actual response from Unreal plugin
-    response = {
-        "jsonrpc": "2.0",
-        "id": message["id"],
-        "result": {
-            "success": True,
-            "message": f"Command '{method}' executed successfully",
-            "timestamp": datetime.now().isoformat(),
-            "data": params
-        }
-    }
+    try:
+        # Send message to Unreal
+        await unreal_client.send(json.dumps(message))
 
-    logger.info(f"Simulated Unreal response: {json.dumps(response, indent=2)}")
-    connection_status = "simulated_success"
+        # Wait for response with timeout
+        response_str = await asyncio.wait_for(unreal_client.recv(), timeout=timeout)
+        response = json.loads(response_str)
 
-    return response.get("result", {})
+        logger.info(f"Received from Unreal: {json.dumps(response)}")
+
+        # Validate JSON-RPC response
+        if response.get("jsonrpc") != "2.0":
+            raise ValueError("Invalid JSON-RPC response from Unreal")
+
+        if response.get("id") != message_id:
+            raise ValueError("Response ID mismatch from Unreal")
+
+        # Check for RPC error
+        if "error" in response:
+            error = response["error"]
+            raise ValueError(f"Unreal RPC Error {error.get('code', 'unknown')}: {error.get('message', 'Unknown error')}")
+
+        connection_status = "connected"
+        return response.get("result", {})
+
+    except websockets.exceptions.ConnectionClosed:
+        connection_status = "disconnected"
+        logger.error("Connection to Unreal Engine was closed")
+        await unregister_client(unreal_client)
+        raise ConnectionError("Connection to Unreal Engine was closed during communication")
+
+    except asyncio.TimeoutError:
+        connection_status = "timeout"
+        logger.error(f"Timeout waiting for response from Unreal Engine (>{timeout}s)")
+        raise TimeoutError(f"No response from Unreal Engine within {timeout} seconds")
+
+    except json.JSONDecodeError as e:
+        connection_status = "protocol_error"
+        logger.error(f"Invalid JSON response from Unreal: {e}")
+        raise ValueError(f"Invalid JSON response from Unreal Engine: {e}")
+
+    except Exception as e:
+        connection_status = "error"
+        logger.error(f"Unexpected error communicating with Unreal: {e}")
+        raise
 
 @mcp.tool()
-def create_blueprint(params: BlueprintCreateParams) -> Dict[str, Any]:
+async def create_blueprint(params: BlueprintCreateParams) -> Dict[str, Any]:
     """
     Creates a new Blueprint asset in Unreal Engine.
 
@@ -131,31 +215,39 @@ def create_blueprint(params: BlueprintCreateParams) -> Dict[str, Any]:
         "asset_path": params.asset_path
     }
 
-    # Send command to Unreal (this is currently simulated)
     try:
-        # In real implementation, this would be an async call
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(send_command_to_unreal("create_blueprint", unreal_params))
-        loop.close()
+        # Send command to Unreal Engine
+        result = await send_command_to_unreal("create_blueprint", unreal_params)
+
+        # Construct the expected blueprint path
+        blueprint_path = f"{params.asset_path.rstrip('/')}/{params.blueprint_name}"
 
         return {
             "success": True,
-            "message": f"Blueprint '{params.blueprint_name}' creation requested",
-            "blueprint_path": f"{params.asset_path}{params.blueprint_name}",
+            "message": f"Blueprint '{params.blueprint_name}' created successfully",
+            "blueprint_path": blueprint_path,
             "parent_class": params.parent_class,
             "unreal_response": result
         }
-    except Exception as e:
+
+    except (ConnectionError, TimeoutError, ValueError) as e:
         logger.error(f"Failed to create blueprint: {e}")
         return {
             "success": False,
             "error": str(e),
-            "message": f"Failed to create blueprint '{params.blueprint_name}'"
+            "message": f"Failed to create blueprint '{params.blueprint_name}': {e}"
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error creating blueprint: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "message": f"Failed to create blueprint '{params.blueprint_name}' due to unexpected error"
         }
 
 @mcp.tool()
-def set_blueprint_property(params: BlueprintPropertyParams) -> Dict[str, Any]:
+async def set_blueprint_property(params: BlueprintPropertyParams) -> Dict[str, Any]:
     """
     Sets a property value on an existing Blueprint asset's CDO (Class Default Object).
 
@@ -187,58 +279,89 @@ def set_blueprint_property(params: BlueprintPropertyParams) -> Dict[str, Any]:
         "property_type": params.property_type
     }
 
-    # Send command to Unreal (this is currently simulated)
     try:
-        # In real implementation, this would be an async call
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(send_command_to_unreal("set_property", unreal_params))
-        loop.close()
+        # Send command to Unreal Engine
+        result = await send_command_to_unreal("set_property", unreal_params)
 
         return {
             "success": True,
-            "message": f"Property '{params.property_name}' modification requested",
+            "message": f"Property '{params.property_name}' set successfully",
             "blueprint_path": params.blueprint_path,
             "property_name": params.property_name,
             "property_value": params.property_value,
             "property_type": params.property_type,
             "unreal_response": result
         }
-    except Exception as e:
+
+    except (ConnectionError, TimeoutError, ValueError) as e:
         logger.error(f"Failed to set property: {e}")
         return {
             "success": False,
             "error": str(e),
-            "message": f"Failed to set property '{params.property_name}'"
+            "message": f"Failed to set property '{params.property_name}': {e}"
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error setting property: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "message": f"Failed to set property '{params.property_name}' due to unexpected error"
         }
 
 @mcp.tool()
-def get_server_status() -> Dict[str, Any]:
+async def get_server_status() -> Dict[str, Any]:
     """
     Gets the current status of the MCP server and its connection to Unreal Engine.
 
     Returns:
         Status information including connection state, last attempt time, and server info
     """
-    global last_connection_attempt, connection_status, unreal_websocket_url
+    global last_connection_attempt, connection_status, server_start_time, ws_server
+
+    # Count active connections
+    active_connections = len(CLIENTS)
+    has_primary_client = unreal_client is not None
+
+    # WebSocket server status
+    ws_server_status = "stopped"
+    if ws_server:
+        if ws_server.is_serving():
+            ws_server_status = "running"
+        else:
+            ws_server_status = "stopped"
 
     return {
         "server_name": "UnrealBlueprintMCPServer",
-        "version": "1.0.0",
+        "version": "2.0.0",
+        "websocket_server": {
+            "status": ws_server_status,
+            "host": WS_HOST,
+            "port": WS_PORT,
+            "url": f"ws://{WS_HOST}:{WS_PORT}"
+        },
         "connection_status": connection_status,
-        "unreal_websocket_url": unreal_websocket_url,
+        "client_connections": {
+            "active_count": active_connections,
+            "has_primary_client": has_primary_client,
+            "primary_client_address": f"{unreal_client.remote_address[0]}:{unreal_client.remote_address[1]}" if unreal_client else None
+        },
         "last_connection_attempt": last_connection_attempt.isoformat() if last_connection_attempt else None,
+        "server_start_time": server_start_time.isoformat() if server_start_time else None,
         "timestamp": datetime.now().isoformat(),
         "available_tools": [
             "create_blueprint",
             "set_blueprint_property",
             "list_supported_blueprint_classes",
-            "create_test_actor_blueprint"
+            "create_test_actor_blueprint",
+            "test_unreal_connection",
+            "start_websocket_server",
+            "stop_websocket_server"
         ]
     }
 
 @mcp.tool()
-def list_supported_blueprint_classes() -> List[str]:
+async def list_supported_blueprint_classes() -> List[str]:
     """
     Lists the blueprint parent classes supported by the Unreal Engine plugin.
 
@@ -265,7 +388,7 @@ def list_supported_blueprint_classes() -> List[str]:
     ]
 
 @mcp.tool()
-def create_test_actor_blueprint(
+async def create_test_actor_blueprint(
     blueprint_name: str = "TestActor",
     location: Vector3D = Vector3D(x=0, y=0, z=100)
 ) -> Dict[str, Any]:
@@ -298,7 +421,7 @@ def create_test_actor_blueprint(
             asset_path="/Game/Blueprints/"
         )
 
-        create_result = create_blueprint(create_params)
+        create_result = await create_blueprint(create_params)
 
         if not create_result.get("success"):
             return {
@@ -315,7 +438,7 @@ def create_test_actor_blueprint(
             property_type="Vector"
         )
 
-        property_result = set_blueprint_property(property_params)
+        property_result = await set_blueprint_property(property_params)
 
         return {
             "success": True,
@@ -332,6 +455,7 @@ def create_test_actor_blueprint(
 
     except Exception as e:
         logger.error(f"Error creating test actor blueprint: {e}")
+        logger.error(traceback.format_exc())
         return {
             "success": False,
             "message": f"Failed to create test actor blueprint: {blueprint_name}",
@@ -341,7 +465,7 @@ def create_test_actor_blueprint(
 # Additional debugging and utility tools
 
 @mcp.tool()
-def test_unreal_connection() -> Dict[str, Any]:
+async def test_unreal_connection() -> Dict[str, Any]:
     """
     Tests the connection to Unreal Engine by sending a ping message.
 
@@ -355,32 +479,172 @@ def test_unreal_connection() -> Dict[str, Any]:
     try:
         start_time = datetime.now()
 
-        # Send a simple ping command
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = loop.run_until_complete(send_command_to_unreal("ping", {"timestamp": start_time.isoformat()}))
-        loop.close()
+        # Send a simple ping command with current timestamp
+        result = await send_command_to_unreal("ping", {
+            "timestamp": start_time.isoformat(),
+            "test_message": "Connection test from MCP server"
+        })
 
         end_time = datetime.now()
         response_time = (end_time - start_time).total_seconds()
 
         return {
             "success": True,
-            "message": "Connection test completed",
+            "message": "Connection test completed successfully",
             "response_time_seconds": response_time,
+            "test_timestamp": start_time.isoformat(),
             "unreal_response": result,
             "connection_status": connection_status
         }
 
-    except Exception as e:
+    except (ConnectionError, TimeoutError, ValueError) as e:
         logger.error(f"Connection test failed: {e}")
         return {
             "success": False,
             "error": str(e),
-            "message": "Failed to connect to Unreal Engine"
+            "message": f"Connection test failed: {e}",
+            "connection_status": connection_status
         }
+    except Exception as e:
+        logger.error(f"Unexpected error during connection test: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "message": "Connection test failed due to unexpected error"
+        }
+
+# WebSocket Server Management Tools
+
+@mcp.tool()
+async def start_websocket_server() -> Dict[str, Any]:
+    """
+    Starts the WebSocket server to accept connections from Unreal Engine clients.
+
+    Returns:
+        Status of the server start operation
+    """
+    global ws_server, server_start_time, connection_status
+
+    if ws_server and ws_server.is_serving():
+        return {
+            "success": False,
+            "message": "WebSocket server is already running",
+            "server_url": f"ws://{WS_HOST}:{WS_PORT}",
+            "start_time": server_start_time.isoformat() if server_start_time else None
+        }
+
+    try:
+        # Start WebSocket server
+        ws_server = await websockets.serve(register_client, WS_HOST, WS_PORT)
+        server_start_time = datetime.now()
+        connection_status = "server_running"
+
+        logger.info(f"WebSocket server started on ws://{WS_HOST}:{WS_PORT}")
+
+        return {
+            "success": True,
+            "message": "WebSocket server started successfully",
+            "server_url": f"ws://{WS_HOST}:{WS_PORT}",
+            "start_time": server_start_time.isoformat(),
+            "host": WS_HOST,
+            "port": WS_PORT
+        }
+
+    except OSError as e:
+        if e.errno == 48:  # Address already in use
+            logger.error(f"Port {WS_PORT} is already in use")
+            return {
+                "success": False,
+                "error": f"Port {WS_PORT} is already in use",
+                "message": "Another application is using the WebSocket port"
+            }
+        else:
+            logger.error(f"Failed to start WebSocket server: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to start WebSocket server"
+            }
+    except Exception as e:
+        logger.error(f"Unexpected error starting WebSocket server: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Failed to start WebSocket server due to unexpected error"
+        }
+
+@mcp.tool()
+async def stop_websocket_server() -> Dict[str, Any]:
+    """
+    Stops the WebSocket server and disconnects all clients.
+
+    Returns:
+        Status of the server stop operation
+    """
+    global ws_server, connection_status, unreal_client
+
+    if not ws_server or not ws_server.is_serving():
+        return {
+            "success": False,
+            "message": "WebSocket server is not running"
+        }
+
+    try:
+        # Close all client connections
+        if CLIENTS:
+            await asyncio.gather(
+                *[client.close() for client in CLIENTS.copy()],
+                return_exceptions=True
+            )
+            CLIENTS.clear()
+
+        # Stop the server
+        ws_server.close()
+        await ws_server.wait_closed()
+
+        ws_server = None
+        unreal_client = None
+        connection_status = "server_stopped"
+
+        logger.info("WebSocket server stopped")
+
+        return {
+            "success": True,
+            "message": "WebSocket server stopped successfully"
+        }
+
+    except Exception as e:
+        logger.error(f"Error stopping WebSocket server: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Failed to stop WebSocket server"
+        }
+
+# Server initialization - this will be called by FastMCP
+async def initialize_server():
+    """
+    Initialize the WebSocket server when the MCP server starts.
+    This function can be called during server startup.
+    """
+    try:
+        result = await start_websocket_server()
+        if result["success"]:
+            logger.info("WebSocket server initialized successfully")
+        else:
+            logger.warning(f"Failed to initialize WebSocket server: {result['message']}")
+    except Exception as e:
+        logger.error(f"Error during server initialization: {e}")
 
 if __name__ == "__main__":
     # This allows the server to be run directly, but FastMCP will handle the actual server startup
     logger.info("Unreal Blueprint MCP Server module loaded")
-    logger.info("Use 'fastmcp dev unreal_blueprint_mcp_server.py' to start the server")
+    logger.info("WebSocket server management enabled")
+    logger.info("Use 'fastmcp dev unreal_blueprint_mcp_server.py' to start the MCP server")
+    logger.info(f"WebSocket server will be available at ws://{WS_HOST}:{WS_PORT}")
+
+    # For direct testing, you can run the WebSocket server
+    # asyncio.run(initialize_server())

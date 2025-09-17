@@ -1,12 +1,14 @@
-# 🎮 UnrealBlueprintMCP
+# 🎮 UnrealBlueprintMCP - Production Implementation
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.6+-blue.svg)](https://www.unrealengine.com/)
+[![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.3+-blue.svg)](https://www.unrealengine.com/)
 [![Python](https://img.shields.io/badge/Python-3.8+-green.svg)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-purple.svg)](https://modelcontextprotocol.io/)
+[![WebSocket](https://img.shields.io/badge/WebSocket-JSON--RPC%202.0-orange.svg)]()
 
-> **AI-Powered Blueprint Creation for Unreal Engine**
-> Create and modify Unreal Engine blueprints using natural language through AI agents
+> **Production-Ready AI Blueprint Control for Unreal Engine**
+>
+> A complete WebSocket client implementation enabling external AI agents to control Unreal Engine Blueprint Editor through JSON-RPC 2.0 protocol. Supports real-time blueprint creation, property modification, component addition, and compilation with comprehensive error handling and UI integration.
 
 ---
 
@@ -539,6 +541,8 @@ flake8 .
 ## 📊 성능 지표
 
 ### 시스템 요구사항
+- **Unreal Engine**: 5.3+ (WebSocket 모듈 지원)
+- **Python**: 3.8+ (비동기 처리 지원)
 - **메모리**: 평균 200MB (Unreal Editor 제외)
 - **CPU**: 블루프린트 생성 시 <1초
 - **네트워크**: WebSocket 지연시간 <50ms (로컬)
@@ -560,9 +564,9 @@ flake8 .
 
 ### 현재 제한사항
 - **에디터 모드**: Play In Editor 중에는 블루프린트 생성 불가
-- **복잡한 노드**: 복잡한 블루프린트 노드 그래프 편집 미지원
+- **복잡한 노드**: 복잡한 블루프린트 노드 그래프 편집 미지원 (v1.1에서 지원 예정)
 - **언두/리두**: 자동 실행취소 기능 미구현
-- **네트워크**: 원격 Unreal 인스턴스 제어 미지원
+- **네트워크**: 원격 Unreal 인스턴스 제어 미지원 (로컬 연결만 지원)
 
 ---
 

@@ -80,6 +80,18 @@ private:
 	 */
 	TSharedRef<class SDockTab> SpawnMCPStatusTab(const class FSpawnTabArgs& Args);
 
+	/**
+	 * Initializes the MCP client and attempts auto-connection if enabled.
+	 * Called during module startup to establish connection to MCP server.
+	 */
+	void InitializeMCPClient();
+
+	/**
+	 * Shuts down the MCP client and disconnects from server.
+	 * Called during module shutdown to ensure clean disconnection.
+	 */
+	void ShutdownMCPClient();
+
 	/** Handle to the registered menu extender */
 	TSharedPtr<class FExtender> MenuExtender;
 

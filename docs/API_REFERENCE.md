@@ -18,12 +18,13 @@
 
 ## 🔍 개요
 
-UnrealBlueprintMCP는 Model Context Protocol을 통해 6개의 핵심 도구를 제공합니다. 모든 통신은 JSON-RPC 2.0 프로토콜을 사용하며, WebSocket을 통해 실시간 양방향 통신을 지원합니다.
+UnrealBlueprintMCP는 Model Context Protocol을 통해 6개의 핵심 도구를 제공하는 완전히 작동하는 프로덕션 시스템입니다. 모든 통신은 JSON-RPC 2.0 프로토콜을 사용하며, WebSocket을 통해 Unreal Engine과 실시간 양방향 통신을 수행합니다.
 
 ### 기본 정보
-- **서버 주소**: `ws://localhost:6277` (프록시 서버)
+- **MCP 프록시 서버**: `ws://localhost:6277`
+- **Unreal WebSocket 서버**: `ws://localhost:8080`
 - **프로토콜**: WebSocket + JSON-RPC 2.0
-- **인증**: 세션 토큰 기반
+- **인증**: 세션 토큰 기반 (MCP Inspector)
 - **문자 인코딩**: UTF-8
 
 ---
@@ -218,10 +219,11 @@ MCP 서버의 현재 상태와 연결 정보를 조회합니다.
   "result": {
     "server_name": "UnrealBlueprintMCPServer",
     "version": "1.0.0",
-    "connection_status": "simulated_success",
+    "connection_status": "connected",
     "unreal_websocket_url": "ws://localhost:8080",
-    "last_connection_attempt": "2025-09-17T03:45:00.000Z",
-    "timestamp": "2025-09-17T03:45:30.000Z",
+    "last_connection_attempt": "2025-01-07T12:00:00.000Z",
+    "last_successful_ping": "2025-01-07T12:00:15.000Z",
+    "timestamp": "2025-01-07T12:00:30.000Z",
     "available_tools": [
       "create_blueprint",
       "set_blueprint_property",
@@ -359,7 +361,7 @@ Unreal Engine과의 WebSocket 연결 상태를 테스트합니다.
       "success": true,
       "message": "Command 'ping' executed successfully"
     },
-    "connection_status": "simulated_success"
+    "connection_status": "connected"
   }
 }
 ```
@@ -770,6 +772,6 @@ await client.setProperty({
 
 ---
 
-**📚 이 API 레퍼런스는 UnrealBlueprintMCP v1.0.0 기준으로 작성되었습니다.**
+**📚 이 API 레퍼런스는 UnrealBlueprintMCP v1.0.0 기준으로 작성되었습니다. (프로덕션 레디 버전)**
 
 **🔄 최신 정보는 [GitHub Repository](https://github.com/yourusername/unreal-blueprint-mcp)에서 확인하세요.**

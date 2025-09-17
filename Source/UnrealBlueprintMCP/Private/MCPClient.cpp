@@ -579,7 +579,10 @@ void UMCPClient::ProcessIncomingMessage(const FString& JsonMessage)
 		{
 			if (Message.Method == TEXT("create_blueprint") ||
 				Message.Method == TEXT("set_property") ||
-				Message.Method == TEXT("set_blueprint_property"))
+				Message.Method == TEXT("set_blueprint_property") ||
+				Message.Method == TEXT("add_component") ||
+				Message.Method == TEXT("compile_blueprint") ||
+				Message.Method == TEXT("get_server_status"))
 			{
 				// Process blueprint command
 				FString Response = ProcessBlueprintCommand(Message.Method, Message.Params);
@@ -587,8 +590,28 @@ void UMCPClient::ProcessIncomingMessage(const FString& JsonMessage)
 				// Send response back if we have a request ID
 				if (!Message.Id.IsEmpty())
 				{
-					SendRawMessage(FString::Printf(TEXT("{\"jsonrpc\":\"2.0\",\"id\":\"%s\",\"result\":%s}"),
-						*Message.Id, *Response));
+					// Create proper JSON-RPC 2.0 response
+					TSharedPtr<FJsonObject> ResponseObject = MakeShareable(new FJsonObject);
+					ResponseObject->SetStringField(TEXT("jsonrpc"), TEXT("2.0"));
+					ResponseObject->SetStringField(TEXT("id"), Message.Id);
+
+					// Try to parse the response as JSON object
+					TSharedPtr<FJsonObject> ResultObject;
+					TSharedRef<TJsonReader<>> ResultReader = TJsonReaderFactory<>::Create(Response);
+					if (FJsonSerializer::Deserialize(ResultReader, ResultObject) && ResultObject.IsValid())
+					{
+						ResponseObject->SetObjectField(TEXT("result"), ResultObject);
+					}
+					else
+					{
+						ResponseObject->SetStringField(TEXT("result"), Response);
+					}
+
+					FString ResponseString;
+					TSharedRef<TJsonWriter<>> ResponseWriter = TJsonWriterFactory<>::Create(&ResponseString);
+					FJsonSerializer::Serialize(ResponseObject.ToSharedRef(), ResponseWriter);
+
+					SendRawMessage(ResponseString);
 				}
 
 				LogMessage(FString::Printf(TEXT("Processed blueprint command: %s"), *Message.Method));
@@ -612,8 +635,21 @@ bool UMCPClient::ParseMCPMessage(const FString& JsonMessage, FMCPMessage& OutMes
 
 	// Parse basic fields
 	JsonObject->TryGetStringField(TEXT("id"), OutMessage.Id);
-	JsonObject->TryGetStringField(TEXT("type"), OutMessage.Type);
 	JsonObject->TryGetStringField(TEXT("method"), OutMessage.Method);
+
+	// Determine message type based on content
+	if (JsonObject->HasField(TEXT("method")))
+	{
+		OutMessage.Type = !OutMessage.Id.IsEmpty() ? TEXT("request") : TEXT("notification");
+	}
+	else if (JsonObject->HasField(TEXT("result")) || JsonObject->HasField(TEXT("error")))
+	{
+		OutMessage.Type = TEXT("response");
+	}
+	else
+	{
+		OutMessage.Type = TEXT("unknown");
+	}
 
 	// Parse params (can be object or string)
 	if (JsonObject->HasField(TEXT("params")))
@@ -684,14 +720,16 @@ FString UMCPClient::CreateJsonFromMCPMessage(const FMCPMessage& Message)
 {
 	TSharedPtr<FJsonObject> JsonObject = MakeShareable(new FJsonObject);
 
+	// Set JSON-RPC 2.0 version
+	JsonObject->SetStringField(TEXT("jsonrpc"), TEXT("2.0"));
+
 	// Set basic fields
 	if (!Message.Id.IsEmpty())
 	{
 		JsonObject->SetStringField(TEXT("id"), Message.Id);
 	}
 
-	JsonObject->SetStringField(TEXT("type"), Message.Type);
-
+	// For JSON-RPC 2.0, we use method field directly instead of type
 	if (!Message.Method.IsEmpty())
 	{
 		JsonObject->SetStringField(TEXT("method"), Message.Method);
@@ -885,6 +923,18 @@ FString UMCPClient::ProcessBlueprintCommand(const FString& Method, const FString
 	else if (Method == TEXT("set_property") || Method == TEXT("set_blueprint_property"))
 	{
 		return BlueprintManager->ProcessSetPropertyCommand(Params);
+	}
+	else if (Method == TEXT("add_component"))
+	{
+		return BlueprintManager->ProcessAddComponentCommand(Params);
+	}
+	else if (Method == TEXT("compile_blueprint"))
+	{
+		return BlueprintManager->ProcessCompileBlueprintCommand(Params);
+	}
+	else if (Method == TEXT("get_server_status"))
+	{
+		return BlueprintManager->ProcessGetServerStatusCommand(Params);
 	}
 	else
 	{

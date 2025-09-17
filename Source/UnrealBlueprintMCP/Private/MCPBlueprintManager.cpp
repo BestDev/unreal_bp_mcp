@@ -638,3 +638,200 @@ void UMCPBlueprintManager::LogMessage(const FString& Message, ELogVerbosity::Typ
 {
 	UE_LOG(LogMCPBlueprintManager, Verbosity, TEXT("[MCPBlueprintManager] %s"), *Message);
 }
+
+FString UMCPBlueprintManager::ProcessAddComponentCommand(const FString& JsonCommand)
+{
+	TSharedPtr<FJsonObject> JsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonCommand);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		FMCPBlueprintOperationResult ErrorResult(false, TEXT("Failed to parse JSON command"));
+		return CreateJsonResponse(ErrorResult);
+	}
+
+	// Parse parameters
+	FString BlueprintPath = JsonObject->GetStringField(TEXT("blueprint_path"));
+	FString ComponentType = JsonObject->GetStringField(TEXT("component_type"));
+	FString ComponentName = JsonObject->GetStringField(TEXT("component_name"));
+
+	// Execute component addition
+	FMCPBlueprintOperationResult Result = AddComponentToBlueprint(BlueprintPath, ComponentType, ComponentName);
+
+	// Return JSON response
+	return CreateJsonResponse(Result);
+}
+
+FString UMCPBlueprintManager::ProcessCompileBlueprintCommand(const FString& JsonCommand)
+{
+	TSharedPtr<FJsonObject> JsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonCommand);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		FMCPBlueprintOperationResult ErrorResult(false, TEXT("Failed to parse JSON command"));
+		return CreateJsonResponse(ErrorResult);
+	}
+
+	// Parse parameters
+	FString BlueprintPath = JsonObject->GetStringField(TEXT("blueprint_path"));
+
+	// Execute blueprint compilation
+	FMCPBlueprintOperationResult Result = CompileBlueprint(BlueprintPath);
+
+	// Return JSON response
+	return CreateJsonResponse(Result);
+}
+
+FString UMCPBlueprintManager::ProcessGetServerStatusCommand(const FString& JsonCommand)
+{
+	// Return server status information
+	return GetServerStatus();
+}
+
+FMCPBlueprintOperationResult UMCPBlueprintManager::AddComponentToBlueprint(const FString& BlueprintPath, const FString& ComponentType, const FString& ComponentName)
+{
+#if WITH_EDITOR
+	// Validate inputs
+	if (BlueprintPath.IsEmpty() || ComponentType.IsEmpty() || ComponentName.IsEmpty())
+	{
+		FString ErrorMessage = TEXT("Blueprint path, component type, and component name cannot be empty");
+		LogMessage(ErrorMessage, ELogVerbosity::Error);
+		return FMCPBlueprintOperationResult(false, ErrorMessage);
+	}
+
+	// Load blueprint asset
+	UBlueprint* Blueprint = LoadBlueprintAsset(BlueprintPath);
+	if (!Blueprint)
+	{
+		FString ErrorMessage = FString::Printf(TEXT("Failed to load blueprint: %s"), *BlueprintPath);
+		LogMessage(ErrorMessage, ELogVerbosity::Error);
+		return FMCPBlueprintOperationResult(false, ErrorMessage);
+	}
+
+	// Find component class
+	UClass* ComponentClass = FindObject<UClass>(ANY_PACKAGE, *ComponentType);
+	if (!ComponentClass)
+	{
+		// Try with "Component" suffix if not found
+		FString ComponentTypeWithSuffix = ComponentType + TEXT("Component");
+		ComponentClass = FindObject<UClass>(ANY_PACKAGE, *ComponentTypeWithSuffix);
+	}
+
+	if (!ComponentClass)
+	{
+		FString ErrorMessage = FString::Printf(TEXT("Component class not found: %s"), *ComponentType);
+		LogMessage(ErrorMessage, ELogVerbosity::Error);
+		return FMCPBlueprintOperationResult(false, ErrorMessage);
+	}
+
+	// Check if it's a valid component class
+	if (!ComponentClass->IsChildOf(UActorComponent::StaticClass()))
+	{
+		FString ErrorMessage = FString::Printf(TEXT("Class %s is not a component class"), *ComponentType);
+		LogMessage(ErrorMessage, ELogVerbosity::Error);
+		return FMCPBlueprintOperationResult(false, ErrorMessage);
+	}
+
+	// Add component using Kismet editor utilities
+	UActorComponent* NewComponent = FKismetEditorUtilities::AddComponentToBlueprint(Blueprint, ComponentClass, *ComponentName);
+	if (!NewComponent)
+	{
+		FString ErrorMessage = FString::Printf(TEXT("Failed to add component %s to blueprint %s"), *ComponentName, *BlueprintPath);
+		LogMessage(ErrorMessage, ELogVerbosity::Error);
+		return FMCPBlueprintOperationResult(false, ErrorMessage);
+	}
+
+	// Mark blueprint as modified
+	Blueprint->MarkPackageDirty();
+
+	// Log success
+	LogMessage(FString::Printf(TEXT("Successfully added component '%s' of type '%s' to blueprint: %s"),
+		*ComponentName, *ComponentType, *BlueprintPath));
+
+	return FMCPBlueprintOperationResult(true, TEXT(""), BlueprintPath);
+
+#else
+	LogMessage(TEXT("Component addition requires editor environment"), ELogVerbosity::Error);
+	return FMCPBlueprintOperationResult(false, TEXT("Editor environment required"));
+#endif
+}
+
+FMCPBlueprintOperationResult UMCPBlueprintManager::CompileBlueprint(const FString& BlueprintPath)
+{
+#if WITH_EDITOR
+	// Validate input
+	if (BlueprintPath.IsEmpty())
+	{
+		FString ErrorMessage = TEXT("Blueprint path cannot be empty");
+		LogMessage(ErrorMessage, ELogVerbosity::Error);
+		return FMCPBlueprintOperationResult(false, ErrorMessage);
+	}
+
+	// Load blueprint asset
+	UBlueprint* Blueprint = LoadBlueprintAsset(BlueprintPath);
+	if (!Blueprint)
+	{
+		FString ErrorMessage = FString::Printf(TEXT("Failed to load blueprint: %s"), *BlueprintPath);
+		LogMessage(ErrorMessage, ELogVerbosity::Error);
+		return FMCPBlueprintOperationResult(false, ErrorMessage);
+	}
+
+	// Compile the blueprint
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+	// Check for compilation errors
+	if (Blueprint->Status == BS_Error)
+	{
+		FString ErrorMessage = FString::Printf(TEXT("Blueprint compilation failed: %s"), *BlueprintPath);
+		LogMessage(ErrorMessage, ELogVerbosity::Error);
+		return FMCPBlueprintOperationResult(false, ErrorMessage);
+	}
+
+	// Log success
+	LogMessage(FString::Printf(TEXT("Successfully compiled blueprint: %s"), *BlueprintPath));
+
+	return FMCPBlueprintOperationResult(true, TEXT(""), BlueprintPath);
+
+#else
+	LogMessage(TEXT("Blueprint compilation requires editor environment"), ELogVerbosity::Error);
+	return FMCPBlueprintOperationResult(false, TEXT("Editor environment required"));
+#endif
+}
+
+FString UMCPBlueprintManager::GetServerStatus() const
+{
+	TSharedPtr<FJsonObject> StatusObject = MakeShareable(new FJsonObject);
+
+	// Basic server information
+	StatusObject->SetBoolField(TEXT("online"), true);
+	StatusObject->SetStringField(TEXT("version"), TEXT("1.0.0"));
+	StatusObject->SetStringField(TEXT("plugin_name"), TEXT("UnrealBlueprintMCP"));
+	StatusObject->SetStringField(TEXT("timestamp"), FDateTime::Now().ToString());
+	StatusObject->SetBoolField(TEXT("editor_available"), WITH_EDITOR ? true : false);
+	StatusObject->SetBoolField(TEXT("initialized"), bIsInitialized);
+
+	// Supported operations
+	TArray<TSharedPtr<FJsonValue>> SupportedOperations;
+	SupportedOperations.Add(MakeShareable(new FJsonValueString(TEXT("create_blueprint"))));
+	SupportedOperations.Add(MakeShareable(new FJsonValueString(TEXT("set_property"))));
+	SupportedOperations.Add(MakeShareable(new FJsonValueString(TEXT("add_component"))));
+	SupportedOperations.Add(MakeShareable(new FJsonValueString(TEXT("compile_blueprint"))));
+	SupportedOperations.Add(MakeShareable(new FJsonValueString(TEXT("get_server_status"))));
+	StatusObject->SetArrayField(TEXT("supported_operations"), SupportedOperations);
+
+	// Supported parent classes
+	TArray<TSharedPtr<FJsonValue>> ParentClasses;
+	for (const FString& ClassName : SupportedParentClasses)
+	{
+		ParentClasses.Add(MakeShareable(new FJsonValueString(ClassName)));
+	}
+	StatusObject->SetArrayField(TEXT("supported_parent_classes"), ParentClasses);
+
+	// Serialize to string
+	FString OutputString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+	FJsonSerializer::Serialize(StatusObject.ToSharedRef(), Writer);
+
+	return OutputString;
+}

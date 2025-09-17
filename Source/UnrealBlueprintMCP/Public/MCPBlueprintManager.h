@@ -186,6 +186,30 @@ public:
 	FString ProcessSetPropertyCommand(const FString& JsonCommand);
 
 	/**
+	 * Process an add_component JSON command from MCP
+	 * @param JsonCommand The JSON command object
+	 * @return JSON response as string
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MCP Blueprint Manager")
+	FString ProcessAddComponentCommand(const FString& JsonCommand);
+
+	/**
+	 * Process a compile_blueprint JSON command from MCP
+	 * @param JsonCommand The JSON command object
+	 * @return JSON response as string
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MCP Blueprint Manager")
+	FString ProcessCompileBlueprintCommand(const FString& JsonCommand);
+
+	/**
+	 * Process a get_server_status JSON command from MCP
+	 * @param JsonCommand The JSON command object
+	 * @return JSON response as string
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MCP Blueprint Manager")
+	FString ProcessGetServerStatusCommand(const FString& JsonCommand);
+
+	/**
 	 * Get list of available parent classes for blueprint creation
 	 * @return Array of class names that can be used as blueprint parents
 	 */
@@ -209,6 +233,31 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "MCP Blueprint Manager")
 	bool ValidatePropertyParams(const FMCPBlueprintPropertyParams& PropertyParams, FString& OutErrorMessage) const;
+
+	/**
+	 * Add a component to an existing blueprint
+	 * @param BlueprintPath Path to the blueprint asset
+	 * @param ComponentType Type of component to add (e.g., "StaticMeshComponent")
+	 * @param ComponentName Name for the new component
+	 * @return Result of the operation
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MCP Blueprint Manager")
+	FMCPBlueprintOperationResult AddComponentToBlueprint(const FString& BlueprintPath, const FString& ComponentType, const FString& ComponentName);
+
+	/**
+	 * Compile an existing blueprint
+	 * @param BlueprintPath Path to the blueprint asset
+	 * @return Result of the operation
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MCP Blueprint Manager")
+	FMCPBlueprintOperationResult CompileBlueprint(const FString& BlueprintPath);
+
+	/**
+	 * Get server status information
+	 * @return JSON string with server status
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MCP Blueprint Manager")
+	FString GetServerStatus() const;
 
 private:
 	// Blueprint creation helpers

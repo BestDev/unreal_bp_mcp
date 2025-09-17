@@ -19,9 +19,9 @@
 ## 🔧 시스템 요구사항 (System Requirements)
 
 ### 필수 소프트웨어 (Required Software)
-- **Unreal Engine 5.6+** - Blueprint 에디터 기능 사용
+- **Unreal Engine 5.3+** - Blueprint 에디터 및 WebSocket 모듈 지원
 - **Visual Studio 2022** - C++ 컴파일러 (Windows)
-- **Python 3.8+** - MCP 서버 실행 환경
+- **Python 3.8+** - MCP 서버 실행 환경 (비동기 처리 지원)
 - **Node.js 18+** - MCP Inspector 실행 (선택사항)
 
 ### 지원 플랫폼 (Supported Platforms)
@@ -192,12 +192,14 @@ pip list
 ### 5단계: MCP 서버 실행 테스트
 
 ```bash
-# 개발 모드로 서버 실행
+# 개발 모드로 서버 실행 (WebSocket 서버가 ws://localhost:8080에서 자동 시작됨)
 fastmcp dev unreal_blueprint_mcp_server.py
 
 # 성공 시 출력 예시:
 # ⚙️ Proxy server listening on localhost:6277
 # 🚀 MCP Inspector is up and running at: http://localhost:6274/...
+# 🌐 WebSocket server started on ws://localhost:8080
+# ✅ UnrealBlueprintMCP Server ready for connections
 ```
 
 ### 6단계: MCP 도구 확인
@@ -319,17 +321,22 @@ python test_unreal_connection.py
 fastmcp dev unreal_blueprint_mcp_server.py
 
 # 2. Unreal Editor 실행 및 MCP Status 창 열기
+# Window > Developer Tools > MCP Status
 
-# 3. MCP Inspector에서 도구 테스트
+# 3. MCP Status 창에서 "Connect" 버튼 클릭
+# 연결 상태가 "Connected"로 변경되는지 확인
+
+# 4. MCP Inspector에서 도구 테스트 (선택사항)
 # http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=<token>
 
-# 4. create_blueprint 도구 실행
+# 5. create_blueprint 도구 실행
 # Parameters:
 # - blueprint_name: "TestActor"
 # - parent_class: "Actor"
 # - asset_path: "/Game/Blueprints/"
 
-# 5. Unreal Editor Content Browser에서 생성된 블루프린트 확인
+# 6. Unreal Editor Content Browser에서 실제 생성된 블루프린트 확인
+# /Game/Blueprints/TestActor.uasset 파일이 실제로 생성됨
 ```
 
 ### 테스트 체크리스트
@@ -419,8 +426,12 @@ fastmcp dev unreal_blueprint_mcp_server.py
 ```bash
 해결방법:
 1. Unreal Editor가 실행 중인지 확인
-2. MCP Status 창이 열려있는지 확인 (WebSocket 서버 활성화)
-3. 포트 충돌 확인 및 해결
+2. MCP Status 창이 열려있고 "Connect" 버튼을 눌렀는지 확인
+3. MCP 플러그인이 정상적으로 로드되었는지 확인 (Output Log 확인)
+4. 포트 8080이 사용 가능한지 확인:
+   - Linux/macOS: lsof -i :8080
+   - Windows: netstat -an | findstr 8080
+5. 방화벽에서 포트 8080 허용 여부 확인
 ```
 
 ### 로그 및 디버깅
@@ -440,7 +451,10 @@ fastmcp dev unreal_blueprint_mcp_server.py
 # 일반적인 로그 메시지:
 - "Starting MCP inspector..."
 - "Proxy server listening on localhost:6277"
+- "WebSocket server started on ws://localhost:8080"
 - "New STDIO connection request"
+- "WebSocket connection established with Unreal Engine"
+- "Received JSON-RPC request: create_blueprint"
 ```
 
 ### 성능 최적화

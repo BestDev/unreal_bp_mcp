@@ -101,10 +101,12 @@ Claude Code에서 MCP 서버 상태 확인:
 # Claude Code 대화에서:
 "Check the MCP server status"
 "What tools are available for Unreal Engine?"
+"Test the connection to Unreal Engine"
 
 # 예상 응답:
 # - 6개 도구 목록 표시
-# - create_blueprint, set_blueprint_property 등
+# - create_blueprint, set_blueprint_property, test_unreal_connection 등
+# - WebSocket 연결 상태: "connected" 또는 "disconnected"
 ```
 
 ---
@@ -281,11 +283,13 @@ async def main():
         classes = await client.list_supported_classes()
         print(f"Classes: {', '.join(classes)}")
 
-        # 4. 블루프린트 생성
+        # 4. 블루프린트 생성 (실제 Unreal Editor에 생성됨)
         print("\n=== Creating Blueprint ===")
         result = await client.create_blueprint("MyCustomActor", "Actor")
         print(f"Blueprint created: {result.get('success')}")
         print(f"Path: {result.get('blueprint_path')}")
+        if result.get('unreal_response'):
+            print(f"Unreal Response: {result['unreal_response'].get('message')}")
 
         # 5. 속성 설정
         print("\n=== Setting Property ===")
@@ -1114,3 +1118,5 @@ class PooledMCPClient:
 ---
 
 **🎮 Happy Coding with UnrealBlueprintMCP! 🚀**
+
+**✨ 이제 실제로 작동하는 프로덕션 시스템입니다! Unreal Editor에서 직접 결과를 확인해보세요. ✨**

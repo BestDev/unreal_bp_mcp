@@ -1,9 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-// UnrealBlueprintMCP Plugin - Phase 1 Implementation
+// UnrealBlueprintMCP Plugin - Production Implementation
 
 #include "UnrealBlueprintMCP.h"
 #include "MCPStatusWidget.h"
 #include "MCPSettings.h"
+#include "MCPClient.h"
 
 // Unreal Engine includes
 #include "Framework/MultiBox/MultiBoxBuilder.h"
@@ -37,12 +38,18 @@ void FUnrealBlueprintMCPModule::StartupModule()
 		.SetGroup(WorkspaceMenu::GetMenuStructure().GetDeveloperToolsDebugCategory())
 		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.GameSettings"));
 
+	// Initialize MCP client and attempt auto-connection if enabled
+	InitializeMCPClient();
+
 	UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("UnrealBlueprintMCP module started successfully"));
 }
 
 void FUnrealBlueprintMCPModule::ShutdownModule()
 {
 	UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("UnrealBlueprintMCP module shutting down..."));
+
+	// Disconnect MCP client if connected
+	ShutdownMCPClient();
 
 	// Unregister menu extensions
 	UnregisterMenuExtensions();
@@ -102,6 +109,66 @@ TSharedRef<SDockTab> FUnrealBlueprintMCPModule::SpawnMCPStatusTab(const FSpawnTa
 		[
 			StatusWidget
 		];
+}
+
+void FUnrealBlueprintMCPModule::InitializeMCPClient()
+{
+	UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("Initializing MCP client..."));
+
+	// Get MCP settings
+	UMCPSettings* MCPSettings = UMCPSettings::Get();
+	if (!MCPSettings)
+	{
+		UE_LOG(LogUnrealBlueprintMCP, Error, TEXT("Failed to get MCP settings"));
+		return;
+	}
+
+	// Get MCP client instance
+	UMCPClient* MCPClient = UMCPClient::Get();
+	if (!MCPClient)
+	{
+		UE_LOG(LogUnrealBlueprintMCP, Error, TEXT("Failed to get MCP client instance"));
+		return;
+	}
+
+	// Initialize the client
+	if (!MCPClient->Initialize(MCPSettings))
+	{
+		UE_LOG(LogUnrealBlueprintMCP, Error, TEXT("Failed to initialize MCP client"));
+		return;
+	}
+
+	// Attempt auto-connection if enabled
+	if (MCPSettings->bAutoConnectOnStartup)
+	{
+		UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("Auto-connect enabled, attempting connection..."));
+
+		if (MCPClient->Connect())
+		{
+			UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("Auto-connection attempt initiated"));
+		}
+		else
+		{
+			UE_LOG(LogUnrealBlueprintMCP, Warning, TEXT("Auto-connection attempt failed"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("Auto-connect disabled in settings"));
+	}
+}
+
+void FUnrealBlueprintMCPModule::ShutdownMCPClient()
+{
+	UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("Shutting down MCP client..."));
+
+	// Get MCP client instance
+	UMCPClient* MCPClient = UMCPClient::Get();
+	if (MCPClient && MCPClient->IsConnected())
+	{
+		MCPClient->Disconnect(true); // Graceful disconnect
+		UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("MCP client disconnected"));
+	}
 }
 
 #undef LOCTEXT_NAMESPACE
