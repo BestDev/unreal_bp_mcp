@@ -82,16 +82,25 @@ fastmcp dev unreal_blueprint_mcp_server.py
 ```
 
 #### 3️⃣ Unreal Engine 플러그인 설치
-```bash
-# 1. Unreal 프로젝트의 Plugins 폴더에 복사
-cp -r Source/UnrealBlueprintMCP /path/to/your/project/Plugins/
+1.  **플러그인 폴더 준비**
+    - Unreal Engine 프로젝트 루트에 `Plugins` 폴더가 없으면 생성합니다.
+    - `Plugins` 폴더 안에 `UnrealBlueprintMCP` 라는 이름의 새 폴더를 만듭니다.
 
-# 2. Unreal Editor에서 플러그인 활성화
-# Edit > Plugins > Project > Custom > UnrealBlueprintMCP ✅
+2.  **플러그인 파일 복사**
+    - 이 저장소의 `Source` 폴더와 `UnrealBlueprintMCP.uplugin` 파일을 `[내 Unreal 프로젝트]/Plugins/UnrealBlueprintMCP/` 폴더 안으로 복사합니다.
+    - 최종 경로는 다음과 같아야 합니다:
+      - `[내 Unreal 프로젝트]/Plugins/UnrealBlueprintMCP/Source`
+      - `[내 Unreal 프로젝트]/Plugins/UnrealBlueprintMCP/UnrealBlueprintMCP.uplugin`
 
-# 3. MCP Status 창 열기
-# Window > Developer Tools > MCP Status
-```
+3.  **프로젝트 파일 재생성 (필수)**
+    - 프로젝트의 `.uproject` 파일을 마우스 오른쪽 버튼으로 클릭하고 **"Generate Visual Studio project files"**를 선택하여 Visual Studio 프로젝트를 업데이트합니다.
+
+4.  **빌드 및 플러그인 활성화**
+    - 생성된 `.sln` 파일을 Visual Studio에서 열고 프로젝트를 빌드합니다.
+    - Unreal Editor에서 프로젝트를 열고 `Edit > Plugins` 메뉴에서 `UnrealBlueprintMCP`를 찾아 활성화(Enabled)합니다. (에디터 재시작 필요)
+
+5.  **MCP 상태 창 확인**
+    - 에디터 메뉴에서 `Window > Developer Tools > MCP Status`를 선택하여 플러그인 UI가 정상적으로 뜨는지 확인합니다.
 
 #### 4️⃣ 첫 테스트 실행
 ```bash
