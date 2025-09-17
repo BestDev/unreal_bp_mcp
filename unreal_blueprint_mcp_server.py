@@ -13,13 +13,26 @@ import json
 import logging
 import asyncio
 import websockets
+import weakref
+import gc
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import uuid
 import traceback
+import html
+
+# Import memory management
+from memory_manager import (
+    MemoryManager, get_memory_manager, track_memory_usage
+)
 
 from fastmcp import FastMCP
+from security_utils import (
+    SecurityValidator, SecurityError,
+    validate_blueprint_creation_params,
+    validate_property_setting_params
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -36,24 +49,73 @@ class Vector3D(BaseModel):
         return f"{self.x},{self.y},{self.z}"
 
 class BlueprintCreateParams(BaseModel):
-    """Parameters for creating a blueprint"""
+    """Parameters for creating a blueprint with security validation"""
     blueprint_name: str = Field(description="Name of the blueprint to create (e.g., 'MyTestActor')")
     parent_class: str = Field(default="Actor", description="Parent class for the blueprint (Actor, Pawn, Character, UserWidget, etc.)")
     asset_path: str = Field(default="/Game/Blueprints/", description="Asset path where to create the blueprint")
 
+    @field_validator('blueprint_name')
+    @classmethod
+    def validate_blueprint_name(cls, v):
+        result = SecurityValidator.validate_blueprint_name(v)
+        if not result["valid"]:
+            raise ValueError(f"Invalid blueprint name: {'; '.join(result['errors'])}")
+        return v
+
+    @field_validator('parent_class')
+    @classmethod
+    def validate_parent_class(cls, v):
+        result = SecurityValidator.validate_parent_class(v)
+        if not result["valid"]:
+            raise ValueError(f"Invalid parent class: {'; '.join(result['errors'])}")
+        return v
+
+    @field_validator('asset_path')
+    @classmethod
+    def validate_asset_path(cls, v):
+        result = SecurityValidator.validate_asset_path(v)
+        if not result["valid"]:
+            raise ValueError(f"Invalid asset path: {'; '.join(result['errors'])}")
+        return result["normalized_path"]
+
 class BlueprintPropertyParams(BaseModel):
-    """Parameters for setting blueprint properties"""
+    """Parameters for setting blueprint properties with security validation"""
     blueprint_path: str = Field(description="Full path to the blueprint asset (e.g., '/Game/Blueprints/MyTestActor')")
     property_name: str = Field(description="Name of the property to modify")
     property_value: str = Field(description="New value for the property as string")
     property_type: Optional[str] = Field(default=None, description="Type hint for the property (int, float, bool, string, Vector, etc.)")
 
+    @field_validator('blueprint_path')
+    @classmethod
+    def validate_blueprint_path(cls, v):
+        result = SecurityValidator.validate_asset_path(v)
+        if not result["valid"]:
+            raise ValueError(f"Invalid blueprint path: {'; '.join(result['errors'])}")
+        return result["normalized_path"]
+
+    @field_validator('property_name')
+    @classmethod
+    def validate_property_name(cls, v):
+        result = SecurityValidator.validate_property_name(v)
+        if not result["valid"]:
+            raise ValueError(f"Invalid property name: {'; '.join(result['errors'])}")
+        return v
+
+    @field_validator('property_value')
+    @classmethod
+    def validate_property_value(cls, v):
+        result = SecurityValidator.validate_property_value(v)
+        if not result["valid"]:
+            raise ValueError(f"Invalid property value: {'; '.join(result['errors'])}")
+        return result["sanitized_value"]
+
 # Create FastMCP server instance
 mcp = FastMCP("UnrealBlueprintMCPServer")
 
-# Global variables for WebSocket server management
+# Global variables for WebSocket server management with memory optimization
 WS_HOST = "localhost"
 WS_PORT = 8080
+MAX_CLIENTS = 50  # Limit concurrent connections
 CLIENTS: Set[websockets.WebSocketServerProtocol] = set()
 unreal_client: Optional[websockets.WebSocketServerProtocol] = None
 ws_server: Optional[websockets.WebSocketServer] = None
@@ -61,28 +123,70 @@ last_connection_attempt: Optional[datetime] = None
 connection_status = "server_not_started"
 server_start_time: Optional[datetime] = None
 
-# WebSocket Connection Management
+# Memory management
+memory_manager: Optional[MemoryManager] = None
+client_weak_refs: List[weakref.ref] = []  # Weak references to prevent memory leaks
+connection_timeouts: Dict[str, datetime] = {}  # Track connection timeouts
+INACTIVE_TIMEOUT = 300.0  # 5 minutes timeout for inactive connections
+
+# WebSocket Connection Management with Memory Optimization
 async def register_client(websocket: websockets.WebSocketServerProtocol, path: str):
-    """Register a new Unreal Engine client connection"""
-    global unreal_client, connection_status, last_connection_attempt
+    """Register a new Unreal Engine client connection with memory management"""
+    global unreal_client, connection_status, last_connection_attempt, memory_manager
+
+    # Check connection limit
+    if len(CLIENTS) >= MAX_CLIENTS:
+        logger.warning(f"Connection limit reached ({MAX_CLIENTS}), rejecting new connection")
+        await websocket.close(code=1013, reason="Server overloaded")
+        return
+
+    # Initialize memory manager if needed
+    if memory_manager is None:
+        memory_manager = get_memory_manager()
+        if not memory_manager._running:
+            await memory_manager.start()
+
+    # Register connection with memory manager
+    if not memory_manager.register_connection(websocket):
+        await websocket.close(code=1013, reason="Server overloaded")
+        return
 
     CLIENTS.add(websocket)
     unreal_client = websocket
     last_connection_attempt = datetime.now()
     connection_status = "connected"
 
+    # Track with weak reference
+    client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+    connection_timeouts[client_id] = datetime.now()
+
+    def cleanup_ref():
+        logger.debug(f"Client {client_id} cleaned up by weak reference")
+        connection_timeouts.pop(client_id, None)
+
+    weak_ref = weakref.ref(websocket, cleanup_ref)
+    client_weak_refs.append(weak_ref)
+
     client_info = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
-    logger.info(f"Unreal Engine client connected from {client_info}")
+    logger.info(f"Unreal Engine client connected from {client_info} (Total: {len(CLIENTS)})")
 
     try:
         # Keep connection alive and handle messages
         async for message in websocket:
             try:
+                # Validate message size for security
+                if not SecurityValidator.validate_websocket_message_size(message):
+                    logger.warning(f"Oversized message received from client {client_info}, dropping connection")
+                    break
+
                 data = json.loads(message)
                 logger.info(f"Received from Unreal: {data}")
                 # Here we could handle unsolicited messages from Unreal if needed
             except json.JSONDecodeError as e:
                 logger.warning(f"Invalid JSON received from client: {e}")
+            except Exception as e:
+                logger.error(f"Error processing message from client {client_info}: {e}")
+                break
 
     except websockets.exceptions.ConnectionClosed:
         logger.info(f"Client {client_info} disconnected")
@@ -127,23 +231,36 @@ async def send_command_to_unreal(method: str, params: Dict[str, Any], timeout: f
     # Generate unique message ID
     message_id = str(uuid.uuid4())
 
+    # Sanitize parameters for security
+    sanitized_params = SecurityValidator.sanitize_json_rpc_params(params)
+
     # Create JSON-RPC 2.0 message
     message = {
         "jsonrpc": "2.0",
         "id": message_id,
-        "method": method,
-        "params": params
+        "method": html.escape(method, quote=True),
+        "params": sanitized_params
     }
+
+    # Validate message size before sending
+    message_str = json.dumps(message)
+    if not SecurityValidator.validate_websocket_message_size(message_str):
+        raise ValueError("Message too large to send safely over WebSocket")
 
     last_connection_attempt = datetime.now()
     logger.info(f"Sending to Unreal: {json.dumps(message)}")
 
     try:
         # Send message to Unreal
-        await unreal_client.send(json.dumps(message))
+        await unreal_client.send(message_str)
 
         # Wait for response with timeout
         response_str = await asyncio.wait_for(unreal_client.recv(), timeout=timeout)
+
+        # Validate response size
+        if not SecurityValidator.validate_websocket_message_size(response_str):
+            raise ValueError("Response too large received from Unreal Engine")
+
         response = json.loads(response_str)
 
         logger.info(f"Received from Unreal: {json.dumps(response)}")
@@ -623,6 +740,104 @@ async def stop_websocket_server() -> Dict[str, Any]:
             "error": str(e),
             "message": "Failed to stop WebSocket server"
         }
+
+# Additional memory management tools
+
+@mcp.tool()
+async def cleanup_inactive_connections() -> Dict[str, Any]:
+    """Cleanup inactive WebSocket connections to free memory"""
+    global connection_timeouts
+
+    current_time = datetime.now()
+    inactive_clients = []
+    cleaned_count = 0
+
+    # Find inactive connections
+    for client_id, last_activity in connection_timeouts.items():
+        if (current_time - last_activity).total_seconds() > INACTIVE_TIMEOUT:
+            inactive_clients.append(client_id)
+
+    # Close inactive connections
+    for client in CLIENTS.copy():
+        try:
+            client_info = f"{client.remote_address[0]}:{client.remote_address[1]}"
+            if client_info in inactive_clients:
+                await unregister_client(client)
+                await client.close(code=1000, reason="Inactive timeout")
+                cleaned_count += 1
+        except Exception as e:
+            logger.warning(f"Error closing inactive connection: {e}")
+
+    # Force garbage collection
+    if memory_manager:
+        gc_stats = memory_manager.force_garbage_collection()
+    else:
+        gc_stats = {"total_collected": gc.collect()}
+
+    return {
+        "success": True,
+        "message": f"Cleaned up {cleaned_count} inactive connections",
+        "inactive_timeout_seconds": INACTIVE_TIMEOUT,
+        "remaining_connections": len(CLIENTS),
+        "gc_collected": gc_stats.get("total_collected", 0)
+    }
+
+@mcp.tool()
+async def get_memory_status() -> Dict[str, Any]:
+    """Get detailed memory status for the server"""
+    if memory_manager:
+        return memory_manager.get_status()
+    else:
+        import psutil
+        process = psutil.Process()
+        memory_info = process.memory_info()
+
+        return {
+            "memory_manager": "not_initialized",
+            "current_memory_mb": memory_info.rss / (1024 * 1024),
+            "memory_percent": process.memory_percent(),
+            "active_connections": len(CLIENTS),
+            "weak_refs": len(client_weak_refs),
+            "connection_timeouts": len(connection_timeouts)
+        }
+
+async def cleanup_dead_references() -> int:
+    """Cleanup dead weak references"""
+    global client_weak_refs
+
+    alive_refs = []
+    dead_count = 0
+
+    for ref in client_weak_refs:
+        if ref() is not None:
+            alive_refs.append(ref)
+        else:
+            dead_count += 1
+
+    client_weak_refs = alive_refs
+
+    if dead_count > 0:
+        logger.debug(f"Cleaned up {dead_count} dead client references")
+
+    return dead_count
+
+async def background_cleanup_task():
+    """Background task for periodic cleanup"""
+    while ws_server and ws_server.is_serving():
+        try:
+            await asyncio.sleep(60)  # Run every minute
+
+            # Cleanup dead references
+            await cleanup_dead_references()
+
+            # Check for inactive connections every 5 minutes
+            if len(connection_timeouts) > 0:
+                await cleanup_inactive_connections()
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in background cleanup task: {e}")
 
 # Server initialization - this will be called by FastMCP
 async def initialize_server():

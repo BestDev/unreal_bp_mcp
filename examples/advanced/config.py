@@ -10,6 +10,19 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 
+# Load environment variables from .env file if available
+try:
+    from dotenv import load_dotenv
+    # Look for .env file in project root (two levels up from this file)
+    env_path = Path(__file__).parent.parent.parent / '.env'
+    if env_path.exists():
+        load_dotenv(env_path)
+        print(f"Loaded environment variables from {env_path}")
+    else:
+        print(f".env file not found at {env_path}, using system environment variables only")
+except ImportError:
+    print("python-dotenv not installed, using system environment variables only")
+
 # MCP Server Configuration
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "ws://localhost:6277")
 MCP_TIMEOUT = float(os.getenv("MCP_TIMEOUT", "30.0"))
@@ -33,9 +46,20 @@ WEB_DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8080"))
 DASHBOARD_AUTO_REFRESH = int(os.getenv("DASHBOARD_REFRESH", "5"))  # seconds
 
 # AI/LangChain Configuration
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 LANGCHAIN_MODEL = os.getenv("LANGCHAIN_MODEL", "gpt-3.5-turbo")
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))
+
+def validate_openai_api_key() -> bool:
+    """Validate OpenAI API key format and presence"""
+    if not OPENAI_API_KEY:
+        return False
+
+    # Basic API key format validation (OpenAI keys start with 'sk-' and are typically 51 chars)
+    if not OPENAI_API_KEY.startswith('sk-') or len(OPENAI_API_KEY) < 20:
+        return False
+
+    return True
 
 # Game Template Configurations
 GAME_TEMPLATES = {
@@ -133,8 +157,8 @@ def validate_configuration() -> Dict[str, Any]:
         issues.append(str(e))
 
     # Check AI configuration if needed
-    if not OPENAI_API_KEY and any("langchain" in str(Path(__file__).parent).lower() for _ in [1]):
-        issues.append("OPENAI_API_KEY not set for LangChain examples")
+    if not validate_openai_api_key():
+        issues.append("OPENAI_API_KEY is missing or invalid format (should start with 'sk-' and be at least 20 characters)")
 
     return {
         "valid": len(issues) == 0,

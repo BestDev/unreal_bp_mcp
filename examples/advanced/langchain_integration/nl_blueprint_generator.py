@@ -51,11 +51,21 @@ class BlueprintSpecification(BaseModel):
 class NLBlueprintGenerator:
     """Generates blueprints from natural language descriptions"""
 
-    def __init__(self, api_key: str = OPENAI_API_KEY, model: str = LANGCHAIN_MODEL):
-        if not api_key:
-            raise ValueError("OpenAI API key is required. Set OPENAI_API_KEY environment variable.")
+    def __init__(self, api_key: str = None, model: str = LANGCHAIN_MODEL):
+        # Use provided key or get from environment
+        self.api_key = api_key or OPENAI_API_KEY
 
-        self.api_key = api_key
+        # Validate API key
+        if not self.api_key:
+            raise ValueError(
+                "OpenAI API key is required. Set OPENAI_API_KEY environment variable or provide api_key parameter."
+            )
+
+        # Basic security validation
+        if not self.api_key.startswith('sk-') or len(self.api_key) < 20:
+            raise ValueError(
+                "Invalid OpenAI API key format. Key should start with 'sk-' and be at least 20 characters long."
+            )
         self.model = model
         self.mcp_server_url = MCP_SERVER_URL
 
