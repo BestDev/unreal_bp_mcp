@@ -1,0 +1,27 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0.0",
+	"FriendlyName": "Unreal Blueprint MCP",
+	"Description": "Enables external AI agents (Gemini, Claude, etc.) to programmatically control Unreal Engine 5.6 Blueprint Editor through Model Context Protocol (MCP).",
+	"Category": "Editor",
+	"CreatedBy": "AI Development Team",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"RequiresBuildPlatform": false,
+	"EnabledByDefault": false,
+	"EngineVersion": "5.6.0",
+	"Modules": [
+		{
+			"Name": "UnrealBlueprintMCP",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

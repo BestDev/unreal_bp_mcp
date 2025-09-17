@@ -1,0 +1,198 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v1.0.0
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for changelog
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run tests
+      run: |
+        pip install pytest pytest-asyncio
+        pytest tests/ -v
+
+    - name: Extract version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Generate changelog since last tag
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [ -n "$PREVIOUS_TAG" ]; then
+          CHANGELOG=$(git log $PREVIOUS_TAG..HEAD --pretty=format:"- %s" --no-merges)
+        else
+          CHANGELOG=$(git log --pretty=format:"- %s" --no-merges)
+        fi
+
+        # Save changelog to file
+        echo "$CHANGELOG" > CHANGELOG_RELEASE.md
+
+        # Set output for use in release notes
+        {
+          echo 'CHANGELOG<<EOF'
+          echo "$CHANGELOG"
+          echo 'EOF'
+        } >> $GITHUB_OUTPUT
+
+    - name: Create release package
+      run: |
+        # Create distribution directory
+        mkdir -p release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}
+
+        # Copy plugin files
+        cp -r Source release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+        cp UnrealBlueprintMCP.uplugin release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+
+        # Copy Python server
+        cp unreal_blueprint_mcp_server.py release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+        cp requirements.txt release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+
+        # Copy documentation
+        cp README.md release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+        cp INSTALLATION_GUIDE.md release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+        cp LICENSE release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+        cp -r docs release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+        cp -r examples release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+
+        # Create archives
+        cd release
+        tar -czf unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}.tar.gz unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+        zip -r unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}.zip unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}/
+
+        # Create plugin-only package
+        mkdir -p unreal-plugin-only
+        cp -r ../Source unreal-plugin-only/
+        cp ../UnrealBlueprintMCP.uplugin unreal-plugin-only/
+        tar -czf unreal-blueprint-mcp-plugin-only-${{ steps.version.outputs.VERSION }}.tar.gz unreal-plugin-only/
+        zip -r unreal-blueprint-mcp-plugin-only-${{ steps.version.outputs.VERSION }}.zip unreal-plugin-only/
+
+        # Create server-only package
+        mkdir -p mcp-server-only
+        cp ../unreal_blueprint_mcp_server.py mcp-server-only/
+        cp ../requirements.txt mcp-server-only/
+        cp -r ../docs mcp-server-only/
+        tar -czf unreal-blueprint-mcp-server-only-${{ steps.version.outputs.VERSION }}.tar.gz mcp-server-only/
+        zip -r unreal-blueprint-mcp-server-only-${{ steps.version.outputs.VERSION }}.zip mcp-server-only/
+
+    - name: Create Release Notes
+      id: release_notes
+      run: |
+        cat > RELEASE_NOTES.md << 'EOF'
+        # UnrealBlueprintMCP ${{ steps.version.outputs.TAG }}
+
+        ## 🎮 What's New
+
+        This release includes the following updates:
+
+        ${{ steps.changelog.outputs.CHANGELOG }}
+
+        ## 📦 Download Options
+
+        ### Complete Package
+        - **unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}.tar.gz** - Complete package with plugin, server, and documentation
+        - **unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}.zip** - Complete package (Windows-friendly)
+
+        ### Component Packages
+        - **unreal-blueprint-mcp-plugin-only-${{ steps.version.outputs.VERSION }}.tar.gz** - Unreal Engine plugin only
+        - **unreal-blueprint-mcp-server-only-${{ steps.version.outputs.VERSION }}.tar.gz** - Python MCP server only
+
+        ## 🚀 Quick Start
+
+        1. Download the complete package
+        2. Follow the [Installation Guide](INSTALLATION_GUIDE.md)
+        3. Check out the [API Reference](docs/API_REFERENCE.md)
+
+        ## 🔧 System Requirements
+
+        - **Unreal Engine**: 5.6+
+        - **Python**: 3.8+
+        - **Platform**: Windows, Linux, macOS
+
+        ## 📋 Features
+
+        - ✅ 6 MCP tools for blueprint control
+        - ✅ WebSocket real-time communication
+        - ✅ Support for 7 blueprint parent classes
+        - ✅ AI client integration (Claude Code, custom clients)
+        - ✅ Comprehensive error handling and validation
+
+        ## 🐛 Bug Reports
+
+        Found an issue? Please report it on our [Issues page](https://github.com/BestDev/unreal_bp_mcp/issues).
+
+        ## 💬 Support
+
+        - 📖 [Documentation](docs/)
+        - 🔧 [Installation Guide](INSTALLATION_GUIDE.md)
+        - 🤖 [MCP Client Setup](docs/MCP_CLIENT_SETUP.md)
+
+        ---
+
+        **Full Changelog**: https://github.com/BestDev/unreal_bp_mcp/compare/v1.0.0...${{ steps.version.outputs.TAG }}
+        EOF
+
+    - name: Create GitHub Release
+      uses: ncipollo/release-action@v1
+      with:
+        tag: ${{ steps.version.outputs.TAG }}
+        name: UnrealBlueprintMCP ${{ steps.version.outputs.TAG }}
+        bodyFile: RELEASE_NOTES.md
+        draft: false
+        prerelease: false
+        artifacts: |
+          release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}.tar.gz
+          release/unreal-blueprint-mcp-${{ steps.version.outputs.VERSION }}.zip
+          release/unreal-blueprint-mcp-plugin-only-${{ steps.version.outputs.VERSION }}.tar.gz
+          release/unreal-blueprint-mcp-plugin-only-${{ steps.version.outputs.VERSION }}.zip
+          release/unreal-blueprint-mcp-server-only-${{ steps.version.outputs.VERSION }}.tar.gz
+          release/unreal-blueprint-mcp-server-only-${{ steps.version.outputs.VERSION }}.zip
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+  notify-release:
+    runs-on: ubuntu-latest
+    needs: create-release
+
+    steps:
+    - name: Extract version
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Notify Discord (if webhook configured)
+      if: ${{ secrets.DISCORD_WEBHOOK }}
+      run: |
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d '{
+               "content": "🎉 **UnrealBlueprintMCP v${{ steps.version.outputs.VERSION }}** has been released!\n\n📥 Download: https://github.com/BestDev/unreal_bp_mcp/releases/tag/v${{ steps.version.outputs.VERSION }}\n📖 Docs: https://github.com/BestDev/unreal_bp_mcp#readme"
+             }' \
+             ${{ secrets.DISCORD_WEBHOOK }}
+
+    - name: Notify success
+      run: |
+        echo "🎉 Release v${{ steps.version.outputs.VERSION }} created successfully!"
+        echo "📥 Download: https://github.com/BestDev/unreal_bp_mcp/releases/tag/v${{ steps.version.outputs.VERSION }}"

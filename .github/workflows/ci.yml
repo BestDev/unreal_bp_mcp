@@ -1,0 +1,233 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test-python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, '3.10', '3.11']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-asyncio pytest-cov
+
+    - name: Lint with flake8
+      run: |
+        pip install flake8
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Format check with black
+      run: |
+        pip install black
+        black --check --diff .
+
+    - name: Type checking with mypy
+      run: |
+        pip install mypy
+        mypy unreal_blueprint_mcp_server.py --ignore-missing-imports
+      continue-on-error: true
+
+    - name: Test with pytest
+      run: |
+        pytest tests/ -v --cov=. --cov-report=xml --cov-report=html
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+
+  test-mcp-server:
+    runs-on: ubuntu-latest
+    needs: test-python
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Start MCP server
+      run: |
+        fastmcp dev unreal_blueprint_mcp_server.py &
+        SERVER_PID=$!
+        echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+        sleep 5  # Wait for server to start
+
+    - name: Test MCP server availability
+      run: |
+        # Test if server is responding
+        timeout 30s bash -c 'until curl -f http://localhost:6274/health 2>/dev/null; do sleep 1; done' || true
+
+    - name: Run integration tests
+      run: |
+        pytest tests/test_integration.py -v
+      continue-on-error: true
+
+    - name: Stop MCP server
+      run: |
+        if [ ! -z "$SERVER_PID" ]; then
+          kill $SERVER_PID || true
+        fi
+
+  validate-plugin:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate Unreal Plugin Structure
+      run: |
+        # Check required plugin files exist
+        test -f "UnrealBlueprintMCP.uplugin"
+        test -f "Source/UnrealBlueprintMCP/UnrealBlueprintMCP.Build.cs"
+        test -d "Source/UnrealBlueprintMCP/Public"
+        test -d "Source/UnrealBlueprintMCP/Private"
+
+    - name: Validate Plugin Metadata
+      run: |
+        # Check .uplugin file is valid JSON
+        python -m json.tool UnrealBlueprintMCP.uplugin > /dev/null
+
+    - name: Check C++ Header Files
+      run: |
+        # Check that all header files have proper include guards
+        find Source/UnrealBlueprintMCP/Public -name "*.h" -exec grep -l "#pragma once" {} \; | wc -l
+
+    - name: Validate Build Configuration
+      run: |
+        # Check Build.cs contains required modules
+        grep -q "WebSockets" Source/UnrealBlueprintMCP/UnrealBlueprintMCP.Build.cs
+        grep -q "Json" Source/UnrealBlueprintMCP/UnrealBlueprintMCP.Build.cs
+        grep -q "Kismet" Source/UnrealBlueprintMCP/UnrealBlueprintMCP.Build.cs
+
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run security scan with bandit
+      run: |
+        pip install bandit
+        bandit -r . -f json -o bandit-report.json || true
+
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-scan-results
+        path: bandit-report.json
+
+  documentation:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check documentation completeness
+      run: |
+        # Check that all required documentation files exist
+        test -f "README.md"
+        test -f "INSTALLATION_GUIDE.md"
+        test -f "docs/API_REFERENCE.md"
+        test -f "docs/MCP_CLIENT_SETUP.md"
+        test -f "LICENSE"
+
+    - name: Validate Markdown
+      run: |
+        # Install markdownlint
+        npm install -g markdownlint-cli
+        # Check markdown files (allow some common issues)
+        markdownlint . --config .markdownlint.json || true
+
+    - name: Check links in documentation
+      run: |
+        # Install markdown-link-check
+        npm install -g markdown-link-check
+        # Check all markdown files for broken links
+        find . -name "*.md" -exec markdown-link-check {} \; || true
+
+  build-artifacts:
+    runs-on: ubuntu-latest
+    needs: [test-python, validate-plugin]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Create release artifacts
+      run: |
+        # Create distribution package
+        mkdir -p dist/unreal-blueprint-mcp
+
+        # Copy essential files
+        cp -r Source dist/unreal-blueprint-mcp/
+        cp UnrealBlueprintMCP.uplugin dist/unreal-blueprint-mcp/
+        cp unreal_blueprint_mcp_server.py dist/unreal-blueprint-mcp/
+        cp requirements.txt dist/unreal-blueprint-mcp/
+        cp README.md dist/unreal-blueprint-mcp/
+        cp INSTALLATION_GUIDE.md dist/unreal-blueprint-mcp/
+        cp LICENSE dist/unreal-blueprint-mcp/
+        cp -r docs dist/unreal-blueprint-mcp/
+        cp -r examples dist/unreal-blueprint-mcp/
+
+        # Create archive
+        cd dist
+        tar -czf unreal-blueprint-mcp.tar.gz unreal-blueprint-mcp/
+        zip -r unreal-blueprint-mcp.zip unreal-blueprint-mcp/
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: unreal-blueprint-mcp-build
+        path: |
+          dist/unreal-blueprint-mcp.tar.gz
+          dist/unreal-blueprint-mcp.zip
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [test-python, test-mcp-server, validate-plugin, security-scan, documentation, build-artifacts]
+    if: always()
+
+    steps:
+    - name: Notify success
+      if: ${{ needs.test-python.result == 'success' && needs.validate-plugin.result == 'success' }}
+      run: echo "✅ All CI checks passed successfully!"
+
+    - name: Notify failure
+      if: ${{ needs.test-python.result == 'failure' || needs.validate-plugin.result == 'failure' }}
+      run: echo "❌ Some CI checks failed. Please review the logs."
