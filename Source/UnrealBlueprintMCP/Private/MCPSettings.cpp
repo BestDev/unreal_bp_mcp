@@ -15,7 +15,7 @@ UMCPSettings::UMCPSettings(const FObjectInitializer& ObjectInitializer)
 	// Set default values
 	ServerAddress = TEXT("localhost");
 	ServerPort = 6277;  // Changed to match FastAPI server port
-	MCPEndpoint = TEXT("/");
+	MCPEndpoint = TEXT("/ws");
 	bAutoConnectOnStartup = false;
 	ReconnectDelay = 5;
 	MaxReconnectAttempts = 3;
@@ -121,7 +121,7 @@ void UMCPSettings::ResetToDefaults()
 	// Reset to constructor defaults
 	ServerAddress = TEXT("localhost");
 	ServerPort = 6277;  // Changed to match FastAPI server port
-	MCPEndpoint = TEXT("/");
+	MCPEndpoint = TEXT("/ws");
 	bAutoConnectOnStartup = false;
 	ReconnectDelay = 5;
 	MaxReconnectAttempts = 3;
