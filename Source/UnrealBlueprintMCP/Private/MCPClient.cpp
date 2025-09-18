@@ -190,7 +190,10 @@ bool UMCPClient::Connect()
 	SetConnectionState(EMCPConnectionState::Connecting);
 	LastConnectionAttempt = FDateTime::Now();
 
-	LogMessage(FString::Printf(TEXT("Attempting to connect to MCP server: %s"), *GetWebSocketURL()));
+	FString WebSocketURL = GetWebSocketURL();
+	LogMessage(FString::Printf(TEXT("Attempting to connect to MCP server: %s"), *WebSocketURL));
+	LogMessage(FString::Printf(TEXT("Connection details - Address: %s, Port: %d, Endpoint: %s"),
+		*MCPSettings->ServerAddress, MCPSettings->ServerPort, *MCPSettings->MCPEndpoint));
 
 	// Attempt connection
 	WebSocket->Connect();
@@ -378,9 +381,10 @@ void UMCPClient::OnWebSocketConnected()
 
 void UMCPClient::OnWebSocketConnectionError(const FString& Error)
 {
-	LogMessage(FString::Printf(TEXT("WebSocket connection error: %s"), *Error), ELogVerbosity::Error);
+	FString DetailedError = FString::Printf(TEXT("WebSocket connection error: %s (URL: %s)"), *Error, *GetWebSocketURL());
+	LogMessage(DetailedError, ELogVerbosity::Error);
 
-	SetConnectionState(EMCPConnectionState::Failed, Error);
+	SetConnectionState(EMCPConnectionState::Failed, DetailedError);
 
 	// Attempt auto-reconnect if enabled
 	if (bAutoReconnectEnabled && ReconnectAttempts < MaxReconnectAttempts)
