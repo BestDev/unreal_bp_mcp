@@ -854,12 +854,33 @@ async def initialize_server():
     except Exception as e:
         logger.error(f"Error during server initialization: {e}")
 
+# Start WebSocket server alongside FastMCP
+async def start_combined_server():
+    """Start both FastMCP (stdio) and WebSocket server concurrently"""
+    # Start WebSocket server
+    await initialize_server()
+
+    # Keep the WebSocket server running
+    try:
+        while ws_server and ws_server.is_serving():
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Server shutdown requested")
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+
+# Add the startup hook for FastMCP
+@mcp.on_startup
+async def on_startup():
+    """Called when FastMCP server starts"""
+    logger.info("FastMCP server starting, initializing WebSocket server...")
+    await initialize_server()
+
 if __name__ == "__main__":
-    # This allows the server to be run directly, but FastMCP will handle the actual server startup
     logger.info("Unreal Blueprint MCP Server module loaded")
     logger.info("WebSocket server management enabled")
     logger.info("Use 'fastmcp dev unreal_blueprint_mcp_server.py' to start the MCP server")
     logger.info(f"WebSocket server will be available at ws://{WS_HOST}:{WS_PORT}")
 
-    # For direct testing, you can run the WebSocket server
-    # asyncio.run(initialize_server())
+    # Start combined server
+    asyncio.run(start_combined_server())

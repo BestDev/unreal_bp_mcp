@@ -13,8 +13,8 @@ UMCPSettings::UMCPSettings(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 	// Set default values
-	ServerAddress = TEXT("localhost");
-	ServerPort = 8080;
+	ServerAddress = TEXT("127.0.0.1");
+	ServerPort = 6277;
 	MCPEndpoint = TEXT("/mcp");
 	bAutoConnectOnStartup = false;
 	ReconnectDelay = 5;
@@ -119,8 +119,8 @@ void UMCPSettings::ResetToDefaults()
 	UE_LOG(LogMCPSettings, Log, TEXT("Resetting MCP settings to defaults"));
 
 	// Reset to constructor defaults
-	ServerAddress = TEXT("localhost");
-	ServerPort = 8080;
+	ServerAddress = TEXT("127.0.0.1");
+	ServerPort = 6277;
 	MCPEndpoint = TEXT("/mcp");
 	bAutoConnectOnStartup = false;
 	ReconnectDelay = 5;

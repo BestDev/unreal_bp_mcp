@@ -268,7 +268,7 @@ private:
 	void OnWebSocketMessage(const FString& Message);
 
 	/** Called when binary data is received (not used for MCP) */
-	void OnWebSocketBinaryMessage(const void* Data, SIZE_T Size, SIZE_T BytesRemaining);
+	void OnWebSocketBinaryMessage(const void* Data, uint64 Size, bool bIsLastFragment);
 
 	/** Called when a message is sent successfully */
 	void OnWebSocketMessageSent(const FString& Message);
@@ -313,7 +313,7 @@ private:
 	void LogMessage(const FString& Message, ELogVerbosity::Type Verbosity = ELogVerbosity::Log);
 
 	/** Notify registered status widgets of updates */
-	void NotifyStatusWidgets(const FString& LogLevel, const FString& LogMessage);
+	void NotifyStatusWidgets(const FString& MessageLogLevel, const FString& LogMessage);
 
 	/** Get the WebSocket URL from current settings */
 	FString GetWebSocketURL() const;

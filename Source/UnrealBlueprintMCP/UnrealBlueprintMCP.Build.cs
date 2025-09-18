@@ -30,7 +30,8 @@ public class UnrealBlueprintMCP : ModuleRules
 			{
 				"Core",
 				"CoreUObject",
-				"Engine"
+				"Engine",
+				"UMG"
 			}
 		);
 

@@ -7,12 +7,16 @@
 // Editor-only includes (wrapped in WITH_EDITOR)
 #if WITH_EDITOR
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Engine/SimpleConstructionScript.h"
+#include "Engine/SCS_Node.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/Blueprint.h"
 #include "UObject/Package.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/Character.h"
 #include "Components/ActorComponent.h"
 #include "Blueprint/UserWidget.h"
 #include "AssetToolsModule.h"
@@ -486,7 +490,11 @@ bool UMCPBlueprintManager::ConvertStringToPropertyValue(const FProperty* Propert
 			FVector Vector;
 			if (Vector.InitFromString(StringValue))
 			{
-				StructProp->SetPropertyValue(OutData, &Vector);
+				FVector* VectorPtr = StructProp->ContainerPtrToValuePtr<FVector>(OutData);
+				if (VectorPtr)
+				{
+					*VectorPtr = Vector;
+				}
 				return true;
 			}
 		}
@@ -495,7 +503,11 @@ bool UMCPBlueprintManager::ConvertStringToPropertyValue(const FProperty* Propert
 			FRotator Rotator;
 			if (Rotator.InitFromString(StringValue))
 			{
-				StructProp->SetPropertyValue(OutData, &Rotator);
+				FRotator* RotatorPtr = StructProp->ContainerPtrToValuePtr<FRotator>(OutData);
+				if (RotatorPtr)
+				{
+					*RotatorPtr = Rotator;
+				}
 				return true;
 			}
 		}
@@ -564,7 +576,10 @@ FString UMCPBlueprintManager::CreateJsonResponse(const FMCPBlueprintOperationRes
 
 	FString OutputString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
-	FJsonSerializer::Serialize(ResponseObject.ToSharedRef(), Writer);
+	if (!FJsonSerializer::Serialize(ResponseObject.ToSharedRef(), Writer))
+	{
+		UE_LOG(LogMCPBlueprintManager, Warning, TEXT("Failed to serialize JSON response"));
+	}
 
 	return OutputString;
 }
@@ -627,8 +642,8 @@ bool UMCPBlueprintManager::IsClassBluepritable(UClass* Class) const
 		return false;
 	}
 
-	// Check if class has Blueprintable flag
-	return Class->HasAnyClassFlags(CLASS_Blueprintable) && !Class->HasAnyClassFlags(CLASS_Deprecated);
+	// Check if class is blueprintable (not abstract, deprecated, or interface)
+	return !Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_Interface);
 #else
 	return false;
 #endif
@@ -636,7 +651,19 @@ bool UMCPBlueprintManager::IsClassBluepritable(UClass* Class) const
 
 void UMCPBlueprintManager::LogMessage(const FString& Message, ELogVerbosity::Type Verbosity) const
 {
-	UE_LOG(LogMCPBlueprintManager, Verbosity, TEXT("[MCPBlueprintManager] %s"), *Message);
+	// Use appropriate log level based on verbosity
+	switch (Verbosity)
+	{
+		case ELogVerbosity::Error:
+			UE_LOG(LogMCPBlueprintManager, Error, TEXT("[MCPBlueprintManager] %s"), *Message);
+			break;
+		case ELogVerbosity::Warning:
+			UE_LOG(LogMCPBlueprintManager, Warning, TEXT("[MCPBlueprintManager] %s"), *Message);
+			break;
+		default:
+			UE_LOG(LogMCPBlueprintManager, Log, TEXT("[MCPBlueprintManager] %s"), *Message);
+			break;
+	}
 }
 
 FString UMCPBlueprintManager::ProcessAddComponentCommand(const FString& JsonCommand)
@@ -733,14 +760,28 @@ FMCPBlueprintOperationResult UMCPBlueprintManager::AddComponentToBlueprint(const
 		return FMCPBlueprintOperationResult(false, ErrorMessage);
 	}
 
-	// Add component using Kismet editor utilities
-	UActorComponent* NewComponent = FKismetEditorUtilities::AddComponentToBlueprint(Blueprint, ComponentClass, *ComponentName);
-	if (!NewComponent)
+	// Get or create the Simple Construction Script
+	USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript;
+	if (!SCS)
 	{
-		FString ErrorMessage = FString::Printf(TEXT("Failed to add component %s to blueprint %s"), *ComponentName, *BlueprintPath);
+		SCS = NewObject<USimpleConstructionScript>(Blueprint);
+		Blueprint->SimpleConstructionScript = SCS;
+	}
+
+	// Create new SCS node for the component
+	USCS_Node* NewNode = SCS->CreateNode(ComponentClass, FName(*ComponentName));
+	if (!NewNode)
+	{
+		FString ErrorMessage = FString::Printf(TEXT("Failed to create SCS node for component %s in blueprint %s"), *ComponentName, *BlueprintPath);
 		LogMessage(ErrorMessage, ELogVerbosity::Error);
 		return FMCPBlueprintOperationResult(false, ErrorMessage);
 	}
+
+	// Add the node to the construction script
+	SCS->AddNode(NewNode);
+
+	// Get the component template from the node
+	UActorComponent* NewComponent = NewNode->ComponentTemplate;
 
 	// Mark blueprint as modified
 	Blueprint->MarkPackageDirty();
@@ -831,7 +872,10 @@ FString UMCPBlueprintManager::GetServerStatus() const
 	// Serialize to string
 	FString OutputString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
-	FJsonSerializer::Serialize(StatusObject.ToSharedRef(), Writer);
+	if (!FJsonSerializer::Serialize(StatusObject.ToSharedRef(), Writer))
+	{
+		UE_LOG(LogMCPBlueprintManager, Warning, TEXT("Failed to serialize server status JSON"));
+	}
 
 	return OutputString;
 }

@@ -133,12 +133,8 @@ void SMCPStatusWidget::Construct(const FArguments& InArgs)
 
 SMCPStatusWidget::~SMCPStatusWidget()
 {
-	// Unregister from MCPClient
-	UMCPClient* MCPClient = UMCPClient::Get();
-	if (MCPClient)
-	{
-		MCPClient->UnregisterStatusWidget(SharedThis(this));
-	}
+	// Note: Cannot use SharedThis() in destructor as the object is being destroyed
+	// The MCPClient will automatically clean up weak pointers when they become invalid
 }
 
 TSharedRef<SWidget> SMCPStatusWidget::CreateConnectionStatusSection()

@@ -398,7 +398,7 @@ void UMCPClient::OnWebSocketMessage(const FString& Message)
 	ProcessIncomingMessage(Message);
 }
 
-void UMCPClient::OnWebSocketBinaryMessage(const void* Data, SIZE_T Size, SIZE_T BytesRemaining)
+void UMCPClient::OnWebSocketBinaryMessage(const void* Data, uint64 Size, bool bIsLastFragment)
 {
 	// MCP protocol uses JSON text messages, binary messages are not expected
 	LogMessage(TEXT("Received unexpected binary message from MCP server"), ELogVerbosity::Warning);
@@ -682,7 +682,7 @@ bool UMCPClient::ParseMCPMessage(const FString& JsonMessage, FMCPMessage& OutMes
 			{
 				FString ResultString;
 				TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ResultString);
-				FJsonSerializer::Serialize(ResultValue.ToSharedRef(), Writer);
+				FJsonSerializer::Serialize(ResultValue, TEXT(""), Writer, false);
 				OutMessage.Result = ResultString;
 			}
 			else
@@ -829,35 +829,46 @@ bool UMCPClient::ValidateMCPMessage(const FMCPMessage& Message)
 
 void UMCPClient::LogMessage(const FString& Message, ELogVerbosity::Type Verbosity)
 {
-	// Use UE logging system
-	UE_LOG(LogMCPClient, Verbosity, TEXT("[MCPClient] %s"), *Message);
-
-	// Also notify status widgets if available
-	FString LogLevel;
+	// Use UE logging system with appropriate log level
 	switch (Verbosity)
 	{
 		case ELogVerbosity::Error:
-			LogLevel = TEXT("Error");
+			UE_LOG(LogMCPClient, Error, TEXT("[MCPClient] %s"), *Message);
 			break;
 		case ELogVerbosity::Warning:
-			LogLevel = TEXT("Warning");
+			UE_LOG(LogMCPClient, Warning, TEXT("[MCPClient] %s"), *Message);
 			break;
 		default:
-			LogLevel = TEXT("Info");
+			UE_LOG(LogMCPClient, Log, TEXT("[MCPClient] %s"), *Message);
 			break;
 	}
 
-	NotifyStatusWidgets(LogLevel, Message);
+	// Also notify status widgets if available
+	FString MessageLogLevel;
+	switch (Verbosity)
+	{
+		case ELogVerbosity::Error:
+			MessageLogLevel = TEXT("Error");
+			break;
+		case ELogVerbosity::Warning:
+			MessageLogLevel = TEXT("Warning");
+			break;
+		default:
+			MessageLogLevel = TEXT("Info");
+			break;
+	}
+
+	NotifyStatusWidgets(MessageLogLevel, Message);
 }
 
-void UMCPClient::NotifyStatusWidgets(const FString& LogLevel, const FString& LogMessage)
+void UMCPClient::NotifyStatusWidgets(const FString& MessageLogLevel, const FString& LogMessage)
 {
 	// Must be called from game thread
 	if (!IsInGameThread())
 	{
-		AsyncTask(ENamedThreads::GameThread, [this, LogLevel, LogMessage]()
+		AsyncTask(ENamedThreads::GameThread, [this, MessageLogLevel, LogMessage]()
 		{
-			NotifyStatusWidgets(LogLevel, LogMessage);
+			NotifyStatusWidgets(MessageLogLevel, LogMessage);
 		});
 		return;
 	}
@@ -871,7 +882,7 @@ void UMCPClient::NotifyStatusWidgets(const FString& LogLevel, const FString& Log
 		{
 			if (TSharedPtr<SMCPStatusWidget> Widget = RegisteredStatusWidgets[i].Pin())
 			{
-				Widget->AddLogEntry(LogLevel, LogMessage);
+				Widget->AddLogEntry(MessageLogLevel, LogMessage);
 				Widget->UpdateConnectionStatus(CurrentConnectionState);
 			}
 		}
