@@ -121,10 +121,22 @@ public:
 
 	/**
 	 * Get the singleton instance of MCPClient
+	 * @param bCreateIfNeeded Whether to create the instance if it doesn't exist
 	 * @return The singleton MCPClient instance
 	 */
 	UFUNCTION(BlueprintPure, Category = "MCP Client")
-	static UMCPClient* Get();
+	static UMCPClient* Get(bool bCreateIfNeeded = true);
+
+	/**
+	 * Shutdown the singleton instance safely
+	 */
+	static void Shutdown();
+
+	/**
+	 * Check if the client is shutting down
+	 * @return True if shutting down
+	 */
+	static bool IsShuttingDown() { return bIsShuttingDown; }
 
 	/**
 	 * Initialize the MCP client with settings
@@ -396,4 +408,7 @@ private:
 
 	// Singleton instance
 	static UMCPClient* SingletonInstance;
+
+	// Shutdown state
+	static bool bIsShuttingDown;
 };

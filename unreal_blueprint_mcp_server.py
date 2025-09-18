@@ -13,10 +13,12 @@ import json
 import logging
 import asyncio
 import websockets
+from websockets.asyncio.server import serve, Server
+from websockets.asyncio.connection import Connection
 import weakref
 import gc
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 from pydantic import BaseModel, Field, field_validator
 import uuid
 import traceback
@@ -116,9 +118,9 @@ mcp = FastMCP("UnrealBlueprintMCPServer")
 WS_HOST = "localhost"
 WS_PORT = 8080
 MAX_CLIENTS = 50  # Limit concurrent connections
-CLIENTS: Set[websockets.WebSocketServerProtocol] = set()
-unreal_client: Optional[websockets.WebSocketServerProtocol] = None
-ws_server: Optional[websockets.WebSocketServer] = None
+CLIENTS: Set[Connection] = set()
+unreal_client: Optional[Connection] = None
+ws_server: Optional[Server] = None
 last_connection_attempt: Optional[datetime] = None
 connection_status = "server_not_started"
 server_start_time: Optional[datetime] = None
@@ -130,7 +132,7 @@ connection_timeouts: Dict[str, datetime] = {}  # Track connection timeouts
 INACTIVE_TIMEOUT = 300.0  # 5 minutes timeout for inactive connections
 
 # WebSocket Connection Management with Memory Optimization
-async def register_client(websocket: websockets.WebSocketServerProtocol, path: str):
+async def register_client(websocket: Connection):
     """Register a new Unreal Engine client connection with memory management"""
     global unreal_client, connection_status, last_connection_attempt, memory_manager
 
@@ -160,7 +162,7 @@ async def register_client(websocket: websockets.WebSocketServerProtocol, path: s
     client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
     connection_timeouts[client_id] = datetime.now()
 
-    def cleanup_ref():
+    def cleanup_ref(ref):
         logger.debug(f"Client {client_id} cleaned up by weak reference")
         connection_timeouts.pop(client_id, None)
 
@@ -188,14 +190,14 @@ async def register_client(websocket: websockets.WebSocketServerProtocol, path: s
                 logger.error(f"Error processing message from client {client_info}: {e}")
                 break
 
-    except websockets.exceptions.ConnectionClosed:
+    except websockets.ConnectionClosed:
         logger.info(f"Client {client_info} disconnected")
     except Exception as e:
         logger.error(f"Error handling client {client_info}: {e}")
     finally:
         await unregister_client(websocket)
 
-async def unregister_client(websocket: websockets.WebSocketServerProtocol):
+async def unregister_client(websocket: Connection):
     """Unregister a client connection"""
     global unreal_client, connection_status
 
@@ -222,6 +224,8 @@ async def send_command_to_unreal(method: str, params: Dict[str, Any], timeout: f
         TimeoutError: If Unreal doesn't respond within timeout
         ValueError: If Unreal returns an error response
     """
+    # Ensure WebSocket server is running
+    await ensure_websocket_server()
     global unreal_client, last_connection_attempt, connection_status
 
     if not unreal_client:
@@ -280,7 +284,7 @@ async def send_command_to_unreal(method: str, params: Dict[str, Any], timeout: f
         connection_status = "connected"
         return response.get("result", {})
 
-    except websockets.exceptions.ConnectionClosed:
+    except websockets.ConnectionClosed:
         connection_status = "disconnected"
         logger.error("Connection to Unreal Engine was closed")
         await unregister_client(unreal_client)
@@ -301,8 +305,8 @@ async def send_command_to_unreal(method: str, params: Dict[str, Any], timeout: f
         logger.error(f"Unexpected error communicating with Unreal: {e}")
         raise
 
-@mcp.tool()
-async def create_blueprint(params: BlueprintCreateParams) -> Dict[str, Any]:
+# Core logic function without decorator
+async def _create_blueprint_logic(params: BlueprintCreateParams) -> Dict[str, Any]:
     """
     Creates a new Blueprint asset in Unreal Engine.
 
@@ -364,7 +368,20 @@ async def create_blueprint(params: BlueprintCreateParams) -> Dict[str, Any]:
         }
 
 @mcp.tool()
-async def set_blueprint_property(params: BlueprintPropertyParams) -> Dict[str, Any]:
+async def create_blueprint(params: BlueprintCreateParams) -> Dict[str, Any]:
+    """
+    Creates a new Blueprint asset in Unreal Engine.
+
+    This tool sends a create_blueprint command to the UnrealBlueprintMCP plugin,
+    which handles the actual blueprint creation in the Unreal Editor.
+    """
+    return await _create_blueprint_logic(params)
+
+# Core logic function without decorator
+async def _set_blueprint_property_logic(params: BlueprintPropertyParams) -> Dict[str, Any]:
+    """
+    Sets a property value on an existing Blueprint asset's CDO (Class Default Object).
+    """
     """
     Sets a property value on an existing Blueprint asset's CDO (Class Default Object).
 
@@ -538,7 +555,7 @@ async def create_test_actor_blueprint(
             asset_path="/Game/Blueprints/"
         )
 
-        create_result = await create_blueprint(create_params)
+        create_result = await _create_blueprint_logic(create_params)
 
         if not create_result.get("success"):
             return {
@@ -633,8 +650,8 @@ async def test_unreal_connection() -> Dict[str, Any]:
 
 # WebSocket Server Management Tools
 
-@mcp.tool()
-async def start_websocket_server() -> Dict[str, Any]:
+# Core logic function without decorator
+async def _start_websocket_server_logic() -> Dict[str, Any]:
     """
     Starts the WebSocket server to accept connections from Unreal Engine clients.
 
@@ -653,7 +670,7 @@ async def start_websocket_server() -> Dict[str, Any]:
 
     try:
         # Start WebSocket server
-        ws_server = await websockets.serve(register_client, WS_HOST, WS_PORT)
+        ws_server = await serve(register_client, WS_HOST, WS_PORT)
         server_start_time = datetime.now()
         connection_status = "server_running"
 
@@ -693,7 +710,17 @@ async def start_websocket_server() -> Dict[str, Any]:
         }
 
 @mcp.tool()
-async def stop_websocket_server() -> Dict[str, Any]:
+async def start_websocket_server() -> Dict[str, Any]:
+    """
+    Starts the WebSocket server to accept connections from Unreal Engine clients.
+
+    Returns:
+        Status of the server start operation
+    """
+    return await _start_websocket_server_logic()
+
+# Core logic function without decorator
+async def _stop_websocket_server_logic() -> Dict[str, Any]:
     """
     Stops the WebSocket server and disconnects all clients.
 
@@ -740,6 +767,16 @@ async def stop_websocket_server() -> Dict[str, Any]:
             "error": str(e),
             "message": "Failed to stop WebSocket server"
         }
+
+@mcp.tool()
+async def stop_websocket_server() -> Dict[str, Any]:
+    """
+    Stops the WebSocket server and disconnects all clients.
+
+    Returns:
+        Status of the server stop operation
+    """
+    return await _stop_websocket_server_logic()
 
 # Additional memory management tools
 
@@ -846,7 +883,7 @@ async def initialize_server():
     This function can be called during server startup.
     """
     try:
-        result = await start_websocket_server()
+        result = await _start_websocket_server_logic()
         if result["success"]:
             logger.info("WebSocket server initialized successfully")
         else:
@@ -854,27 +891,43 @@ async def initialize_server():
     except Exception as e:
         logger.error(f"Error during server initialization: {e}")
 
-# Start WebSocket server alongside FastMCP
-async def start_combined_server():
-    """Start both FastMCP (stdio) and WebSocket server concurrently"""
-    # Start WebSocket server
-    await initialize_server()
+# Initialize WebSocket server automatically when tools are first used
+async def ensure_websocket_server():
+    """Ensure WebSocket server is running, start it if not"""
+    global ws_server
+    if not ws_server or not ws_server.is_serving():
+        logger.info("Auto-starting WebSocket server for Unreal Engine connections...")
+        result = await _start_websocket_server_logic()
+        if not result["success"]:
+            logger.warning(f"Failed to auto-start WebSocket server: {result['message']}")
 
-    # Keep the WebSocket server running
+# FastMCP doesn't have an on_startup decorator, so we'll handle startup differently
+# The initialize_server function will be called manually or through background tasks
+
+# Alternative startup mechanism for when used as a standalone server
+async def standalone_server():
+    """Run both FastMCP and WebSocket server when used standalone"""
     try:
+        # Start WebSocket server
+        await initialize_server()
+
+        # Run FastMCP stdio server in the background
+        fastmcp_task = asyncio.create_task(mcp.run_stdio_async(show_banner=False))
+
+        # Keep WebSocket server running
         while ws_server and ws_server.is_serving():
             await asyncio.sleep(1)
+
     except KeyboardInterrupt:
         logger.info("Server shutdown requested")
+        if not fastmcp_task.done():
+            fastmcp_task.cancel()
+        if ws_server:
+            await _stop_websocket_server_logic()
     except Exception as e:
-        logger.error(f"Server error: {e}")
-
-# Add the startup hook for FastMCP
-@mcp.on_startup
-async def on_startup():
-    """Called when FastMCP server starts"""
-    logger.info("FastMCP server starting, initializing WebSocket server...")
-    await initialize_server()
+        logger.error(f"Standalone server error: {e}")
+        if not fastmcp_task.done():
+            fastmcp_task.cancel()
 
 if __name__ == "__main__":
     logger.info("Unreal Blueprint MCP Server module loaded")
@@ -882,5 +935,5 @@ if __name__ == "__main__":
     logger.info("Use 'fastmcp dev unreal_blueprint_mcp_server.py' to start the MCP server")
     logger.info(f"WebSocket server will be available at ws://{WS_HOST}:{WS_PORT}")
 
-    # Start combined server
-    asyncio.run(start_combined_server())
+    # Start standalone server (both FastMCP stdio and WebSocket)
+    asyncio.run(standalone_server())

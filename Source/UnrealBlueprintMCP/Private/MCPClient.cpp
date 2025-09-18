@@ -19,6 +19,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogMCPClient, Log, All);
 
 // Static member definitions
 UMCPClient* UMCPClient::SingletonInstance = nullptr;
+bool UMCPClient::bIsShuttingDown = false;
 const float UMCPClient::BaseReconnectDelay = 2.0f;
 const float UMCPClient::MaxReconnectDelay = 60.0f;
 const float UMCPClient::ConnectionTimeout = 30.0f;
@@ -73,14 +74,36 @@ void UMCPClient::BeginDestroy()
 	Super::BeginDestroy();
 }
 
-UMCPClient* UMCPClient::Get()
+UMCPClient* UMCPClient::Get(bool bCreateIfNeeded)
 {
-	if (!SingletonInstance)
+	// 종료 중이면 nullptr 반환
+	if (bIsShuttingDown)
 	{
-		SingletonInstance = NewObject<UMCPClient>();
+		return nullptr;
+	}
+
+	if (!SingletonInstance && bCreateIfNeeded)
+	{
+		// 적절한 Outer 제공 (Transient Package 사용)
+		SingletonInstance = NewObject<UMCPClient>(GetTransientPackage());
 		SingletonInstance->AddToRoot(); // Prevent garbage collection
 	}
 	return SingletonInstance;
+}
+
+void UMCPClient::Shutdown()
+{
+	bIsShuttingDown = true;
+
+	if (SingletonInstance)
+	{
+		if (SingletonInstance->IsConnected())
+		{
+			SingletonInstance->Disconnect(true);
+		}
+		SingletonInstance->RemoveFromRoot();
+		SingletonInstance = nullptr;
+	}
 }
 
 bool UMCPClient::Initialize(UMCPSettings* InSettings)

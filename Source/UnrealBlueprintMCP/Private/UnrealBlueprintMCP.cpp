@@ -162,13 +162,10 @@ void FUnrealBlueprintMCPModule::ShutdownMCPClient()
 {
 	UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("Shutting down MCP client..."));
 
-	// Get MCP client instance
-	UMCPClient* MCPClient = UMCPClient::Get();
-	if (MCPClient && MCPClient->IsConnected())
-	{
-		MCPClient->Disconnect(true); // Graceful disconnect
-		UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("MCP client disconnected"));
-	}
+	// 안전한 종료 - Get() 대신 직접 Shutdown() 호출
+	UMCPClient::Shutdown();
+
+	UE_LOG(LogUnrealBlueprintMCP, Log, TEXT("MCP client shutdown complete"));
 }
 
 #undef LOCTEXT_NAMESPACE
